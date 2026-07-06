@@ -1,0 +1,359 @@
+"""
+CLI agent for querying the Conventus membership API.
+
+Usage:
+  python conventus_agent.py search --name "Jensen"
+  python conventus_agent.py list --group prime
+  python conventus_agent.py list --group all
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import socket
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+# Ensure UTF-8 output on Windows terminals (fixes Danish chars æ/ø/å)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from project root (walk up from this script's location)
+_script_dir = Path(__file__).resolve().parent
+for _candidate in [_script_dir, *_script_dir.parents]:
+    if (_candidate / ".env").exists():
+        load_dotenv(_candidate / ".env")
+        break
+
+CONVENTUS_ID = os.environ.get("CONVENTUS_ID", "")
+CONVENTUS_API_KEY = os.environ.get("CONVENTUS_API_KEY", "")
+
+API_URL = "https://www.conventus.dk/dataudv/api/adressebog/get_grupper_medlemmer.php"
+
+GROUP_ALIASES: dict[str, list[str]] = {
+    "prime":        ["1019486", "1019508", "1046242"],
+    "non-prime":    ["1019513", "1019517", "1046244"],
+    "hele-2026":    ["1019486", "1019513"],
+    "jan-jun-2026": ["1019508", "1019517"],
+    "all":          ["1019486", "1019508", "1019513", "1019517", "1046242", "1046244"],
+    # Year-based aliases
+    "2021":         ["704445", "704446", "720175"],
+    "2022":         ["704445", "704446", "720175"],
+    "2023":         ["704445", "791184", "854985"],
+    "2024":         ["893985", "939685", "893982", "791187"],
+    "2025":         ["959495", "959479", "959497", "959502", "959496", "959493"],
+    "2026":         ["1019486", "1019508", "1019513", "1019517", "1046242", "1046244"],
+}
+
+GROUP_NAMES: dict[str, str] = {
+    # 2026
+    "1019486": "Padel: Hele 2026 (prime)",
+    "1019508": "Padel: Januar-Juni 2026 (prime)",
+    "1019513": "Padel: Hele 2026 (non-prime)",
+    "1019517": "Padel: Jan-Juni 2026 (non-prime)",
+    "1046242": "Padel: Resten af 2026 (prime)",
+    "1046244": "Padel: Resten af 2026 (non-prime)",
+    # 2025
+    "959495":  "Padel: Hele 2025 (prime)",
+    "959479":  "Padel: Januar-Juni 2025 (prime)",
+    "959497":  "Padel: Juli-December 2025 (prime)",
+    "959502":  "Padel: Hele 2025 (non-prime)",
+    "959496":  "Padel: Januar-Juni 2025 (non-prime)",
+    "959493":  "Padel: Juli-December 2025 (non-prime)",
+    # 2024
+    "893985":  "Padel: Hele 2024 (prime)",
+    "939685":  "Padel: Juli-December 2024 (prime)",
+    "893982":  "Padel: Hele 2024 (non-prime)",
+    # 2023
+    "791184":  "Padel: Hele 2023 (prime)",
+    "854985":  "Padel: Hele 2023 B (prime)",
+    "791187":  "Padel: Hele 2024 børn (non-prime)",
+    # 2021-2023
+    "704445":  "Padel: Hele 2021, 2022 og 2023 (prime)",
+    "704446":  "Padel: Hele 2021 og 2022 (prime)",
+    "720175":  "Padel: Hele 2021 og 2022 B (prime)",
+}
+
+# Groups that count toward each year (members in any of these groups were active that year)
+YEAR_GROUPS: dict[int, list[str]] = {
+    2021: ["704445", "704446", "720175"],
+    2022: ["704445", "704446", "720175"],   # same packages — flersæson-kontingent
+    2023: ["704445", "791184", "854985"],
+    2024: ["893985", "939685", "893982", "791187"],
+    2025: ["959495", "959479", "959497", "959502", "959496", "959493"],
+    2026: ["1019486", "1019508", "1019513", "1019517", "1046242", "1046244"],
+}
+
+
+def _log_dns_diagnostics(host: str) -> None:
+    """Resolve and print the A (IPv4) and AAAA (IPv6) records for ``host``.
+
+    A broken IPv6 route on the runner (SYN to an AAAA address gets blackholed)
+    is the most common cause of intermittent ``[Errno 110] Connection timed
+    out`` from GitHub-hosted runners. Logging both record sets makes that
+    visible in the workflow log.
+    """
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+        v4 = sorted({i[4][0] for i in infos if i[0] == socket.AF_INET})
+        v6 = sorted({i[4][0] for i in infos if i[0] == socket.AF_INET6})
+        print(f"[i] DNS for {host}: IPv4={v4 or '(ingen)'}  IPv6={v6 or '(ingen)'}")
+    except Exception as e:  # noqa: BLE001 — diagnostics must never break the call
+        print(f"[i] DNS-opslag for {host} fejlede: {e}")
+
+
+def fetch_members(group_ids: list[str], timeout: float = 180.0, retries: int = 5) -> list[dict]:
+    """Fetch members from the Conventus API for the given group IDs.
+
+    Raises RuntimeError if the API is unreachable after the given retries.
+    Callers MUST treat this exception as fatal — falling back to manual data
+    would bypass the "member has paid in Conventus" verification.
+
+    Forces IPv4 (unless CONVENTUS_FORCE_IPV4=0) because GitHub-hosted runners
+    frequently have broken IPv6 egress to conventus.dk, which manifests as an
+    intermittent TCP connection timeout.
+    """
+    if not CONVENTUS_ID or not CONVENTUS_API_KEY:
+        raise RuntimeError("CONVENTUS_ID and CONVENTUS_API_KEY must be set (env or .env)")
+
+    groups_param = ",".join(group_ids)
+    url = f"{API_URL}?forening={CONVENTUS_ID}&key={CONVENTUS_API_KEY}&grupper={groups_param}"
+
+    force_ipv4 = os.environ.get("CONVENTUS_FORCE_IPV4", "1") != "0"
+    host = urllib.parse.urlsplit(API_URL).hostname or "www.conventus.dk"
+    _log_dns_diagnostics(host)
+    if force_ipv4:
+        print("[i] Tvinger IPv4 til Conventus (CONVENTUS_FORCE_IPV4=1).")
+
+    # Scope the IPv4-forcing patch to just this function so it never affects
+    # other network clients in the same process (e.g. Gmail/Google API).
+    _saved_getaddrinfo = socket.getaddrinfo
+
+    def _patched(host_, port_, family=0, type_=0, proto=0, flags=0):  # noqa: A002
+        return _saved_getaddrinfo(host_, port_, socket.AF_INET, type_, proto, flags)
+
+    last_err: Exception | None = None
+    xml_data: str | None = None
+    try:
+        if force_ipv4:
+            socket.getaddrinfo = _patched  # type: ignore[assignment]
+
+        for attempt in range(retries + 1):
+            try:
+                resp = urllib.request.urlopen(url, timeout=timeout)  # noqa: S310 — URL from config
+                xml_data = resp.read().decode("utf-8")
+                break
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                last_err = e
+                if attempt < retries:
+                    wait = min(2 ** attempt, 30)  # 1s, 2s, 4s, 8s, 16s (capped at 30s)
+                    print(f"[!] Conventus API fejl (forsøg {attempt+1}/{retries+1}), prøver igen om {wait}s: {e}")
+                    time.sleep(wait)
+    finally:
+        socket.getaddrinfo = _saved_getaddrinfo  # type: ignore[assignment]
+
+    if xml_data is None:
+        raise RuntimeError(
+            f"Conventus API kunne ikke nås efter {retries+1} forsøg: {last_err}"
+        )
+
+    root = ET.fromstring(xml_data)
+
+    # Build group membership map: member_id -> list of group IDs
+    group_map: dict[str, list[str]] = {}
+    for gruppe in root.findall(".//relationer/gruppe"):
+        gid = gruppe.findtext("id", "")
+        for m in gruppe.findall("medlem/medlem"):
+            mid = m.text or ""
+            group_map.setdefault(mid, []).append(gid)
+
+    # Parse member details
+    members = []
+    for medlem in root.findall(".//medlemmer/medlem"):
+        mid = medlem.findtext("id", "")
+        member = {
+            "id": mid,
+            "type": medlem.findtext("type", ""),
+            "koen": medlem.findtext("koen", ""),
+            "navn": medlem.findtext("navn", ""),
+            "adresse1": medlem.findtext("adresse1", ""),
+            "adresse2": medlem.findtext("adresse2", ""),
+            "postnr": medlem.findtext("postnr", ""),
+            "by": medlem.findtext("postnr_by", ""),
+            "kommune": medlem.findtext("kommune_navn", ""),
+            "tlf": medlem.findtext("tlf", ""),
+            "mobil": medlem.findtext("mobil", ""),
+            "email": medlem.findtext("email", ""),
+            "foedselsdato": medlem.findtext("birth", ""),
+            "indmeldelsesdato": medlem.findtext("indmeldelsesdato", ""),
+            "slettet": medlem.findtext("slettet", ""),
+            "grupper": [GROUP_NAMES.get(g, g) for g in group_map.get(mid, [])],
+            "grupper_ids": group_map.get(mid, []),
+        }
+        members.append(member)
+
+    return members
+
+
+def resolve_groups(group_arg: str) -> list[str]:
+    """Resolve a group alias or comma-separated IDs to a list of group IDs."""
+    if group_arg in GROUP_ALIASES:
+        return GROUP_ALIASES[group_arg]
+    return [g.strip() for g in group_arg.split(",")]
+
+
+def print_member(m: dict, verbose: bool = False) -> None:
+    """Print a single member's details."""
+    if verbose:
+        max_key = max(len(k) for k in m)
+        for k, v in m.items():
+            if k == "grupper":
+                v = ", ".join(v) if v else "(ingen)"
+            if v:
+                print(f"  {k:{max_key}s}  {v}")
+        print()
+    else:
+        grupper = ", ".join(m["grupper"]) if m["grupper"] else ""
+        print(f"  {m['id']:>8s}  {m['navn']:35s}  {m['email']:35s}  {m.get('mobil',''):12s}  {grupper}")
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    """Search for members by name."""
+    group_ids = resolve_groups(args.group)
+    members = fetch_members(group_ids)
+
+    search_term = args.name.lower()
+    matches = [m for m in members if search_term in m["navn"].lower()]
+
+    print(f"=== Conventus: Søger '{args.name}' i {len(members)} medlemmer ===\n")
+    if not matches:
+        print("  Ingen medlemmer fundet.")
+        return
+
+    print(f"  Fandt {len(matches)} medlem(mer):\n")
+    for m in matches:
+        print_member(m, verbose=True)
+
+
+def cmd_list(args: argparse.Namespace) -> None:
+    """List all members in a group."""
+    group_ids = resolve_groups(args.group)
+    members = fetch_members(group_ids)
+
+    group_label = args.group if args.group in GROUP_ALIASES else ", ".join(group_ids)
+    print(f"=== Conventus: {len(members)} medlemmer i '{group_label}' ===\n")
+    print(f"  {'ID':>8s}  {'Navn':35s}  {'Email':35s}  {'Mobil':12s}  Grupper")
+    print(f"  {'-'*8}  {'-'*35}  {'-'*35}  {'-'*12}  {'-'*30}")
+    for m in sorted(members, key=lambda x: x["navn"]):
+        print_member(m)
+
+    print(f"\n  Total: {len(members)} medlemmer")
+
+
+def cmd_stats(args: argparse.Namespace) -> None:  # noqa: ARG001
+    """Show membership count statistics per year with churn/retention analysis."""
+    all_group_ids = list({gid for ids in YEAR_GROUPS.values() for gid in ids})
+    members = fetch_members(all_group_ids)
+
+    # Build year → unique member ID set
+    year_sets: dict[int, set[str]] = {
+        year: {m["id"] for m in members if set(gids) & set(m["grupper_ids"])}
+        for year, gids in sorted(YEAR_GROUPS.items())
+    }
+    years = sorted(year_sets)
+    all_ids = {m["id"] for m in members}
+
+    print("=== Padel Membership Statistics (2021-2026) ===\n")
+    print(f"  {'År':>4}  {'Medlemmer':>9}  {'Ny':>5}  {'Forblev':>8}  {'Forlod':>7}  {'Fastholdelse':>14}")
+    print(f"  {'-'*4}  {'-'*9}  {'-'*5}  {'-'*8}  {'-'*7}  {'-'*14}")
+
+    prev_ids: set[str] | None = None
+    prev_year: int | None = None
+    notes: list[str] = []
+
+    for year in years:
+        ids = year_sets[year]
+        total = len(ids)
+        note = ""
+
+        if prev_ids is None:
+            new_s, ret_s, churn_s, pct_s = str(total), "–", "–", "–"
+        else:
+            if set(YEAR_GROUPS[year]) == set(YEAR_GROUPS[prev_year]):  # type: ignore[arg-type]
+                note = " *"
+                if not notes:
+                    notes.append(
+                        f"* År {prev_year} og {year} benytter de samme Conventus-grupper "
+                        "(flersæson-kontingent) — churn kan ikke beregnes for dette skifte."
+                    )
+            retained = ids & prev_ids
+            churned = prev_ids - ids
+            new_members = ids - prev_ids
+            new_s = str(len(new_members))
+            ret_s = str(len(retained))
+            churn_s = str(len(churned))
+            pct_s = f"{100 * len(retained) / len(prev_ids):.1f}%" if prev_ids else "–"
+
+        print(f"  {year:>4}  {total:>9}  {new_s:>5}  {ret_s:>8}  {churn_s:>7}  {pct_s:>14}{note}")
+        prev_ids = ids
+        prev_year = year
+
+    print(f"\n  Total unikke medlemmer (alle år): {len(all_ids)}")
+    if notes:
+        print()
+        for n in notes:
+            print(f"  {n}")
+
+
+def _normalize_name(name: str) -> str:
+    """Lowercase, strip, collapse spaces — for fuzzy name matching."""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", name.lower().strip())
+    return " ".join("".join(c for c in nfkd if not unicodedata.combining(c)).split())
+
+
+def cmd_compare(args: argparse.Namespace) -> None:  # noqa: ARG001
+    """Compare all Conventus members against HalBooking and show differences."""
+    print("[!] Cross-system compare kræver HalBooking automation.")
+    print("    Brug padel-halbooking/analyze_memberships.py eller padel-halbooking export + padel-conventus stats.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Conventus membership query agent")
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    p_search = sub.add_parser("search", help="Search for a member by name")
+    p_search.add_argument("--name", required=True, help="Name (or part of name) to search for")
+    p_search.add_argument("--group", default="all", help="Group alias or comma-separated IDs (default: all)")
+
+    p_list = sub.add_parser("list", help="List all members in a group")
+    p_list.add_argument("--group", default="all", help="Group alias or comma-separated IDs (default: all)")
+
+    sub.add_parser("stats", help="Show membership statistics per year with churn analysis (2021-2026)")
+    sub.add_parser("compare", help="Compare Conventus vs HalBooking — show members only in one system")
+
+    args = parser.parse_args()
+
+    if args.action == "search":
+        cmd_search(args)
+    elif args.action == "list":
+        cmd_list(args)
+    elif args.action == "stats":
+        cmd_stats(args)
+    elif args.action == "compare":
+        cmd_compare(args)
+
+
+if __name__ == "__main__":
+    main()
+

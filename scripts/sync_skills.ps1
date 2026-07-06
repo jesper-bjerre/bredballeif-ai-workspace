@@ -2,29 +2,24 @@ $ErrorActionPreference = 'Stop'
 
 $WorkspaceRoot = Split-Path -Parent $PSScriptRoot
 $ManifestPath = Join-Path $WorkspaceRoot 'skills.manifest.json'
-$CacheRoot = Join-Path $WorkspaceRoot '.skills-cache'
 
 if (-not (Test-Path -LiteralPath $ManifestPath)) {
     throw "Manifest ikke fundet: $ManifestPath"
 }
 
 $Manifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
-New-Item -ItemType Directory -Force -Path $CacheRoot | Out-Null
 
 foreach ($Skill in $Manifest.skills) {
     $Name = [string]$Skill.name
-    $Repo = [string]$Skill.repo
-    $Ref = [string]$Skill.ref
-    $ClonePath = Join-Path $CacheRoot $Name
-
-    if (-not (Test-Path -LiteralPath (Join-Path $ClonePath '.git'))) {
-        git clone $Repo $ClonePath
-    } else {
-        git -C $ClonePath fetch --all --tags --prune
+    $Source = [string]$Skill.source
+    if ([string]::IsNullOrWhiteSpace($Source)) {
+        $Source = "skills/$Name"
     }
 
-    git -C $ClonePath checkout $Ref
-    git -C $ClonePath pull --ff-only 2>$null
+    $SourcePath = Join-Path $WorkspaceRoot $Source
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
+        throw "Skill-kilde ikke fundet for ${Name}: $SourcePath"
+    }
 
     foreach ($Target in $Skill.targets) {
         $TargetDir = Join-Path $WorkspaceRoot ([string]$Target)
@@ -41,7 +36,7 @@ foreach ($Skill in $Manifest.skills) {
             }
         }
 
-        New-Item -ItemType Junction -Path $LinkPath -Target $ClonePath | Out-Null
+        New-Item -ItemType Junction -Path $LinkPath -Target $SourcePath | Out-Null
         Write-Host "Synced $Name -> $LinkPath"
     }
 }

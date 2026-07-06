@@ -2,32 +2,27 @@
   "skills": [
     {
       "name": "padel-baner",
-      "repo": "https://github.com/jesper-bjerre/bredballeif-skill-padel-baner.git",
-      "ref": "main",
+      "source": "skills/padel-baner",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
       "name": "padel-conventus",
-      "repo": "https://github.com/jesper-bjerre/bredballeif-skill-padel-conventus.git",
-      "ref": "main",
+      "source": "skills/padel-conventus",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
       "name": "padel-halbooking",
-      "repo": "https://github.com/jesper-bjerre/bredballeif-skill-padel-halbooking.git",
-      "ref": "main",
+      "source": "skills/padel-halbooking",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
       "name": "padel-onboarding",
-      "repo": "https://github.com/jesper-bjerre/bredballeif-skill-padel-onboarding.git",
-      "ref": "main",
+      "source": "skills/padel-onboarding",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
       "name": "boerneattest",
-      "repo": "https://github.com/jesper-bjerre/bredballeif-skill-boerneattest.git",
-      "ref": "main",
+      "source": "skills/boerneattest",
       "targets": [".github/skills", ".claude/skills"]
     }
   ]
