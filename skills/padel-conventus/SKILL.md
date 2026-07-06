@@ -51,5 +51,4 @@ Sæt disse i runtime-miljøet eller en gitignored `.env`:
 ```text
 CONVENTUS_ID=
 CONVENTUS_API_KEY=
-CONVENTUS_FORCE_IPV4=1
 ```

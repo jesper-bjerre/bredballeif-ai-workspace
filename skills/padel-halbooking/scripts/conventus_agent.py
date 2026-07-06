@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import socket
 import sys
 import time
 import urllib.error
@@ -94,34 +93,12 @@ YEAR_GROUPS: dict[int, list[str]] = {
     2026: ["1019486", "1019508", "1019513", "1019517", "1046242", "1046244"],
 }
 
-
-def _log_dns_diagnostics(host: str) -> None:
-    """Resolve and print the A (IPv4) and AAAA (IPv6) records for ``host``.
-
-    A broken IPv6 route on the runner (SYN to an AAAA address gets blackholed)
-    is the most common cause of intermittent ``[Errno 110] Connection timed
-    out`` from GitHub-hosted runners. Logging both record sets makes that
-    visible in the workflow log.
-    """
-    try:
-        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
-        v4 = sorted({i[4][0] for i in infos if i[0] == socket.AF_INET})
-        v6 = sorted({i[4][0] for i in infos if i[0] == socket.AF_INET6})
-        print(f"[i] DNS for {host}: IPv4={v4 or '(ingen)'}  IPv6={v6 or '(ingen)'}")
-    except Exception as e:  # noqa: BLE001 — diagnostics must never break the call
-        print(f"[i] DNS-opslag for {host} fejlede: {e}")
-
-
 def fetch_members(group_ids: list[str], timeout: float = 180.0, retries: int = 5) -> list[dict]:
     """Fetch members from the Conventus API for the given group IDs.
 
     Raises RuntimeError if the API is unreachable after the given retries.
     Callers MUST treat this exception as fatal — falling back to manual data
     would bypass the "member has paid in Conventus" verification.
-
-    Forces IPv4 (unless CONVENTUS_FORCE_IPV4=0) because GitHub-hosted runners
-    frequently have broken IPv6 egress to conventus.dk, which manifests as an
-    intermittent TCP connection timeout.
     """
     if not CONVENTUS_ID or not CONVENTUS_API_KEY:
         raise RuntimeError("CONVENTUS_ID and CONVENTUS_API_KEY must be set (env or .env)")
@@ -129,38 +106,19 @@ def fetch_members(group_ids: list[str], timeout: float = 180.0, retries: int = 5
     groups_param = ",".join(group_ids)
     url = f"{API_URL}?forening={CONVENTUS_ID}&key={CONVENTUS_API_KEY}&grupper={groups_param}"
 
-    force_ipv4 = os.environ.get("CONVENTUS_FORCE_IPV4", "1") != "0"
-    host = urllib.parse.urlsplit(API_URL).hostname or "www.conventus.dk"
-    _log_dns_diagnostics(host)
-    if force_ipv4:
-        print("[i] Tvinger IPv4 til Conventus (CONVENTUS_FORCE_IPV4=1).")
-
-    # Scope the IPv4-forcing patch to just this function so it never affects
-    # other network clients in the same process (e.g. Gmail/Google API).
-    _saved_getaddrinfo = socket.getaddrinfo
-
-    def _patched(host_, port_, family=0, type_=0, proto=0, flags=0):  # noqa: A002
-        return _saved_getaddrinfo(host_, port_, socket.AF_INET, type_, proto, flags)
-
     last_err: Exception | None = None
     xml_data: str | None = None
-    try:
-        if force_ipv4:
-            socket.getaddrinfo = _patched  # type: ignore[assignment]
-
-        for attempt in range(retries + 1):
-            try:
-                resp = urllib.request.urlopen(url, timeout=timeout)  # noqa: S310 — URL from config
-                xml_data = resp.read().decode("utf-8")
-                break
-            except (urllib.error.URLError, TimeoutError, OSError) as e:
-                last_err = e
-                if attempt < retries:
-                    wait = min(2 ** attempt, 30)  # 1s, 2s, 4s, 8s, 16s (capped at 30s)
-                    print(f"[!] Conventus API fejl (forsøg {attempt+1}/{retries+1}), prøver igen om {wait}s: {e}")
-                    time.sleep(wait)
-    finally:
-        socket.getaddrinfo = _saved_getaddrinfo  # type: ignore[assignment]
+    for attempt in range(retries + 1):
+        try:
+            resp = urllib.request.urlopen(url, timeout=timeout)  # noqa: S310 — URL from config
+            xml_data = resp.read().decode("utf-8")
+            break
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+            if attempt < retries:
+                wait = min(2 ** attempt, 30)  # 1s, 2s, 4s, 8s, 16s (capped at 30s)
+                print(f"[!] Conventus API fejl (forsøg {attempt+1}/{retries+1}), prøver igen om {wait}s: {e}")
+                time.sleep(wait)
 
     if xml_data is None:
         raise RuntimeError(
