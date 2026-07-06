@@ -117,20 +117,30 @@ kun får adgang til padel-specifikke skills.
 
 ## Opdatering
 
-Når repoet er opdateret:
+Første gang i en container / hvis repoet er klonet af en anden bruger, kan Git klage over
+"dubious ownership". Kør da først:
+
+```bash
+git config --global --add safe.directory /opt/bredballeif-ai-workspace
+```
+
+Hent seneste kode og genstart agenterne:
 
 ```bash
 cd /opt/bredballeif-ai-workspace
 git pull --ff-only
-. .venv/bin/activate
-pip install -r skills/boerneattest/requirements.txt
-pip install -r skills/padel-baner/requirements.txt
-pip install -r skills/padel-conventus/requirements.txt
-pip install -r skills/padel-halbooking/requirements.txt
-pip install -r skills/padel-onboarding/requirements.txt
 ```
 
 Genstart derefter de relevante OpenClaw-agenter, så de bruger den nye kode og de nye `SKILL.md`-instruktioner.
+
+**Kun hvis en `requirements.txt` har ændret sig** (fx ved ny skill eller nye dependencies), kør også:
+
+```bash
+. .venv/bin/activate
+pip install -r skills/<navn>/requirements.txt   # kun den ændrede skill
+```
+
+Tip: `git diff HEAD@{1} -- '**/requirements.txt'` viser om nogen requirements ændrede sig siden sidste pull.
 
 ## Sikkerhedsregler
 

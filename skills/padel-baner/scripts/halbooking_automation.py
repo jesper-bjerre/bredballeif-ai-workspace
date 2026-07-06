@@ -436,31 +436,55 @@ class HalBookingAutomation:
             result["note"] = "Kom ikke til admin_straks.asp efter klik på ledig slot."
             return result
 
-        # Step 3: set text and expand end-time to requested duration.
+        # Step 3: set text FIRST so it's visible before any time-extension
+        # buttons are clicked (order matters for visual feedback).
         if text:
             if self._fill_if_visible("#book_tekst", text):
                 result["steps_completed"].append("3_text_set")
 
-        p.evaluate(
-            """(cfg) => {
-                const {dateStr, courtNo, fromTime, toTime} = cfg;
-                const setVal = (name, value) => {
-                    const el = document.querySelector(`[name="${name}"]`);
-                    if (el) el.value = value;
-                };
-                setVal('mf_tiltid', toTime);
-                setVal('mf_multiretbooking', `${dateStr};1;${courtNo};${fromTime};${toTime};0;`);
-            }""",
-            {
-                "dateStr": date_str,
-                "courtNo": court,
-                "fromTime": start_time,
-                "toTime": final_end,
-            },
-        )
-        p.wait_for_timeout(300)
-        self._screenshot("straks_03_form_updated")
-        result["steps_completed"].append("3_duration_set")
+        # Build the multiretbooking value – the field HalBooking uses to
+        # expand a booking across multiple consecutive 30-minute slots.
+        # Format: DD-MM-YYYY;1;<court>;<start_time>;<end_time>;0;
+        multi_ret = f"{date_str};1;{court};{start_time};{final_end};0;"
+
+        # If duration > 30 min, click the HalBooking time-extension button
+        # (genvis_straksknap('HH:MM')) instead of setting hidden fields
+        # directly. HalBooking's "Godkend reservation" reads state set by
+        # those buttons — raw hidden-field manipulation is ignored.
+        if duration_minutes > 30:
+            extend_btn = p.locator(f"[onclick*=\"genvis_straksknap('{final_end}')\"]").first
+            if extend_btn.count() > 0:
+                extend_btn.click()
+                p.wait_for_timeout(600)
+                self._screenshot("straks_03_time_extended")
+                result["steps_completed"].append("3_time_extended")
+            else:
+                # Fallback: try setting hidden fields + dispatching events
+                p.evaluate(
+                    """(cfg) => {
+                        const setAndNotify = (name, value) => {
+                            const el = document.querySelector(`[name="${name}"]`);
+                            if (!el) return;
+                            el.value = value;
+                            if (el.tagName === 'SELECT') {
+                                for (const opt of el.options) {
+                                    if (opt.value === value || opt.textContent.trim() === value) {
+                                        el.selectedIndex = opt.index;
+                                        break;
+                                    }
+                                }
+                            }
+                            el.dispatchEvent(new Event('input',  {bubbles: true}));
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                        };
+                        setAndNotify('mf_tiltid',          cfg.toTime);
+                        setAndNotify('mf_multiretbooking', cfg.multiRet);
+                    }""",
+                    {"toTime": final_end, "multiRet": multi_ret},
+                )
+                p.wait_for_timeout(400)
+                self._screenshot("straks_03_fallback_hidden")
+                result["steps_completed"].append("3_fallback_hidden")
 
         # Step 4: approve reservation.
         approve_btn = self._find_first([
