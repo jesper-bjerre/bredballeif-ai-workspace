@@ -1,16 +1,18 @@
 """
-Read-only padel court availability agent for HalBooking.
+Padel court availability & multi-booking agent for HalBooking.
 
-The agent logs in with a read-only HalBooking user and reports which padel
-courts (SPORT 24, Sydbank, home Vejle) are free on a given date and optional
-time window. It never creates, edits, books or deletes anything.
+The agent logs into HalBooking and can:
+- Check which padel courts (SPORT 24, Sydbank, home Vejle) are free.
+- Book courts via Multi-booking (admin_multi.asp), which provides an access
+  code (adgangskode) for the door lock. Multiple courts booked together get
+  the same access code.
 
 Usage:
   python -m agent availability --date 05-07-2026
   python -m agent availability --date 05-07-2026 --time-from 18:00 --time-to 20:00
-  python -m agent availability --date 05-07-2026 --visible   # show the browser
-  python -m agent book-court --date 28-06-2026 --court 1 --start-time 19:00 --duration 60 --text "Booking"
-  python -m agent book-court --date 28-06-2026 --court 1 --start-time 19:00 --end-time 20:00 --text "Booking"
+  python -m agent availability --date 05-07-2026 --visible
+  python -m agent book-court --date 28-06-2026 --courts 1 --start-time 19:00 --duration 60 --text "Booking"
+  python -m agent book-court --date 28-06-2026 --courts 1,2 --start-time 19:00 --end-time 20:00 --text "Booking"
 """
 
 from __future__ import annotations
@@ -112,13 +114,16 @@ def _parse_clock_minutes(clock: str) -> int:
 def cmd_book_court(
     bot: HalBookingAutomation,
     date_str: str,
-    court: int,
+    courts: list[int],
     start_time: str,
     duration_minutes: int | None = None,
     end_time: str | None = None,
     text: str = "",
 ) -> None:
-    """Create and approve a court booking on admin_straks.asp.
+    """Create court bookings via Multi-booking (admin_multi.asp).
+
+    All courts are booked in a single multi-booking call so they share the
+    same access code (adgangskode) for the door lock.
 
     Either *duration_minutes* or *end_time* (HH:MM) must be given.
     If both are given, *end_time* takes precedence.
@@ -133,8 +138,9 @@ def cmd_book_court(
         print("[!] Angiv enten --duration eller --end-time. Afbryder.")
         return
 
+    court_labels = ", ".join(str(c) for c in courts)
     print(
-        f"=== Opret booking: {date_str} bane {court} {start_time} "
+        f"=== Multi-booking: {date_str} bane(r) {court_labels} {start_time} "
         f"({duration_minutes} min) ===\n"
     )
     bot.start()
@@ -143,31 +149,35 @@ def cmd_book_court(
             print("\n[!] Login fejlede.")
             return
 
-        result = bot.create_straks_booking(
+        result = bot.create_multi_booking(
             date_str=date_str,
-            court=court,
+            courts=courts,
             start_time=start_time,
             duration_minutes=duration_minutes,
             text=text,
         )
 
         print(f"  Success: {result.get('success')}")
-        print(f"  Bane:    {court}")
-        print(f"  Tid:     {start_time} - {result.get('end_time', '?')}")
+        print(f"  Baner:   {court_labels}")
+        print(f"  Tid:     {start_time} ({duration_minutes} min)")
         if text:
             print(f"  Tekst:   {text}")
+        access_code = result.get("access_code", "")
+        if access_code:
+            print(f"  Adgangskode: {access_code}")
         if result.get("note"):
             print(f"  Note:    {result['note']}")
 
     finally:
         bot.stop()
 
-    print("\n=== Booking-flow afsluttet ===\n")
+    print("\n=== Multi-booking afsluttet ===\n")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Padel court availability & booking agent for HalBooking"
+        description="Padel court availability & booking agent for HalBooking",
+        allow_abbrev=False,
     )
     parser.add_argument(
         "action",
@@ -187,8 +197,9 @@ def main() -> None:
         help="Upper time bound HH:MM, exclusive (for 'availability')",
     )
     parser.add_argument(
-        "--court", type=int, default=None,
-        help="Court number 1-3 (for 'book-court')",
+        "--courts", type=str, default=None,
+        help="Comma-separated court numbers, e.g. '1,2' or '1' (for 'book-court'). "
+             "All courts get the same access code.",
     )
     parser.add_argument(
         "--start-time", dest="start_time", type=str, default=None,
@@ -229,8 +240,18 @@ def main() -> None:
         if not args.date:
             print("[!] --date er påkrævet for book-court. Afbryder.")
             sys.exit(1)
-        if not args.court:
-            print("[!] --court er påkrævet for book-court. Afbryder.")
+        # Resolve courts from --courts
+        if args.courts:
+            try:
+                courts = [int(c.strip()) for c in args.courts.split(",") if c.strip()]
+            except ValueError:
+                print("[!] --courts skal være kommaseparerede tal, fx '1,2'. Afbryder.")
+                sys.exit(1)
+        else:
+            print("[!] --courts er påkrævet for book-court. Afbryder.")
+            sys.exit(1)
+        if not courts:
+            print("[!] Ingen gyldige baner i --courts. Afbryder.")
             sys.exit(1)
         if not args.start_time:
             print("[!] --start-time er påkrævet for book-court. Afbryder.")
@@ -244,7 +265,7 @@ def main() -> None:
         cmd_book_court(
             bot,
             date_str=args.date,
-            court=args.court,
+            courts=courts,
             start_time=args.start_time,
             duration_minutes=args.duration,
             end_time=args.end_time,

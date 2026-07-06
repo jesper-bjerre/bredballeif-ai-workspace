@@ -523,6 +523,238 @@ class HalBookingAutomation:
             result["note"] = "Kunne ikke bekræfte booking sikkert ud fra sideindhold."
         return result
 
+    # -- multi-booking (admin_multi.asp) -------------------------------------
+
+    def create_multi_booking(
+        self,
+        date_str: str,
+        courts: list[int],
+        start_time: str,
+        duration_minutes: int,
+        text: str = "",
+    ) -> dict[str, Any]:
+        """Create bookings via Multi-booking (admin_multi.asp).
+
+        Multi-booking is the preferred method because it provides an access
+        code (``adgangskode``) for the door lock.
+
+        Flow:
+        1. Navigate to admin_baner.asp, set date, click "Multi-booking".
+        2. On admin_multi.asp, check the checkboxes for each 30-min slot
+           for each requested court.
+        3. Click "Opret bookinger" (id_btn_7).
+        4. On the review page: fill text, read access code, click
+           "Vis de valgte bookinger" (visknap).
+        5. On the confirmation page: click "OK - Opret bookinger" (id_btn_3).
+        """
+        p = self.page
+        result: dict[str, Any] = {
+            "success": False,
+            "date": date_str,
+            "courts": courts,
+            "start_time": start_time,
+            "duration_minutes": duration_minutes,
+            "text": text,
+            "access_code": "",
+            "steps_completed": [],
+        }
+
+        if not courts:
+            result["note"] = "Ingen baner valgt."
+            return result
+        if duration_minutes <= 0 or duration_minutes % 30 != 0:
+            result["note"] = "Varighed skal være et positivt multiplum af 30 minutter."
+            return result
+
+        # Calculate slot indices. Grid starts at 05:00, each row = 30 min.
+        start_minutes = self._hhmm_to_minutes(start_time)
+        if start_minutes is None:
+            result["note"] = f"Ugyldig starttid: {start_time}"
+            return result
+        # Slot 0 = 05:00 (300 minutes)
+        start_slot = (start_minutes - 300) // 30
+        num_slots = duration_minutes // 30
+        if start_slot < 0:
+            result["note"] = "Starttidspunkt er før kl. 05:00."
+            return result
+
+        # --- Step 1: navigate to admin_baner.asp and set date ---
+        p.goto(f"{self.base_url}/admin_baner.asp", wait_until="networkidle")
+        p.wait_for_timeout(1500)
+        self._navigate_date(date_str)
+        self._screenshot("multi_01_date_set")
+        result["steps_completed"].append("1_date_set")
+
+        # --- Step 2: click Multi-booking ---
+        # The Multi-booking button is a visible DIV with a specific onclick.
+        # Using the onclick pattern is more reliable than text matching.
+        multi_btn = p.locator("[onclick*=\"admin_multi.asp\"][onclick*=\"velg\"]").first
+        if multi_btn.count() == 0:
+            # Fallback: try visible div with exact text
+            multi_btn = p.locator("div:visible:has-text('Multi-booking')").first
+        if multi_btn.count() == 0:
+            result["note"] = "Kunne ikke finde 'Multi-booking' knap."
+            self._screenshot("multi_02_no_btn")
+            return result
+        multi_btn.click(force=True)
+        p.wait_for_load_state("networkidle")
+        p.wait_for_timeout(2500)
+        if "admin_multi.asp" not in p.url:
+            result["note"] = "Kom ikke til admin_multi.asp efter Multi-booking klik."
+            return result
+        self._screenshot("multi_02_grid")
+        result["steps_completed"].append("2_multi_grid")
+
+        # --- Step 3: check the relevant checkboxes (via JS to avoid viewport issues) ---
+        court_prefixes = {1: "B1E", 2: "B2E", 3: "B3E"}
+        cb_names = []
+        for court in courts:
+            prefix = court_prefixes.get(court)
+            if not prefix:
+                continue
+            for slot_offset in range(num_slots):
+                slot_idx = start_slot + slot_offset
+                cb_names.append(f"{prefix}{slot_idx}")
+
+        if not cb_names:
+            result["note"] = "Ingen checkboxes at vælge."
+            return result
+
+        # Build JS to check all desired checkboxes at once
+        checked_count = p.evaluate(f"""(names) => {{
+            let count = 0;
+            names.forEach(name => {{
+                const cb = document.querySelector("input[name='" + name + "']");
+                if (!cb) return;
+                cb.checked = true;
+                // Fire HalBooking's blocklick handler
+                if (typeof blocklick === 'function' && cb.form) {{
+                    const partner = cb.form[name];
+                    if (partner) blocklick(cb, partner, '');
+                }}
+                // Also dispatch events for any other listeners
+                cb.dispatchEvent(new Event('change', {{bubbles: true}}));
+                cb.dispatchEvent(new Event('click', {{bubbles: true}}));
+                if (typeof cb.onfocus === 'function') cb.onfocus();
+                count++;
+            }});
+            return count;
+        }}""", cb_names)
+
+        if checked_count == 0:
+            result["note"] = "Kunne ikke finde nogen ledige checkboxes for de valgte baner/tider."
+            self._screenshot("multi_03_no_slots")
+            return result
+
+        p.wait_for_timeout(300)
+
+        self._screenshot("multi_03_checked")
+        result["steps_completed"].append("3_slots_checked")
+
+        # --- Step 4: click "Opret bookinger" ---
+        submit_btn = p.locator("#id_btn_7").first
+        if submit_btn.count() == 0:
+            result["note"] = "Kunne ikke finde 'Opret bookinger' knap (id_btn_7)."
+            return result
+        submit_btn.click()
+        p.wait_for_load_state("networkidle")
+        p.wait_for_timeout(2500)
+        self._screenshot("multi_04_review")
+        result["steps_completed"].append("4_on_review")
+
+        # --- Step 5: set text, read access code, click "Vis de valgte bookinger" ---
+        if text:
+            booktekst = p.locator("#booktekst").first
+            if booktekst.count() > 0:
+                booktekst.fill(text)
+                p.wait_for_timeout(300)
+
+        # Read the access code
+        access_input = p.locator("#n_adgangskode").first
+        if access_input.count() > 0:
+            result["access_code"] = (access_input.input_value() or "").strip()
+
+        self._screenshot("multi_05_text_and_code")
+        result["steps_completed"].append("5_text_and_code")
+
+        # Click "Vis de valgte bookinger" (span#visknap)
+        vis_btn = p.locator("#visknap").first
+        if vis_btn.count() == 0:
+            result["note"] = "Kunne ikke finde 'Vis de valgte bookinger' knap (visknap)."
+            return result
+        vis_btn.click()
+        p.wait_for_load_state("networkidle")
+        p.wait_for_timeout(2500)
+        self._screenshot("multi_06_confirm")
+        result["steps_completed"].append("6_on_confirm")
+
+        # --- Step 6: click "OK - Opret bookinger" ---
+        ok_btn = p.locator("#id_btn_3").first
+        if ok_btn.count() == 0:
+            ok_btn = p.locator("a:has-text('OK - Opret bookinger')").first
+        if ok_btn.count() == 0:
+            ok_btn = p.locator("span:has-text('OK - Opret bookinger')").first
+        if ok_btn.count() == 0:
+            result["note"] = "Kunne ikke finde 'OK - Opret bookinger' knap (id_btn_3)."
+            return result
+        ok_btn.click()
+        p.wait_for_load_state("networkidle")
+        p.wait_for_timeout(2500)
+        self._screenshot("multi_07_done")
+        result["steps_completed"].append("7_done")
+
+        # Determine success
+        body_text = p.inner_text("body").lower()
+        success_markers = ["godkendt", "oprettet", "booking"]
+        result["success"] = any(m in body_text for m in success_markers)
+        if not result["success"]:
+            result["success"] = any(
+                x in p.url for x in ("admin_baner.asp", "admin_liste.asp")
+            )
+        result["final_url"] = p.url
+        if not result["success"]:
+            result["note"] = result.get("note") or "Kunne ikke bekræfte booking."
+
+        return result
+
+    def _navigate_date(self, date_str: str) -> None:
+        """Navigate admin_baner.asp to *date_str* (DD-MM-YYYY) using sende()."""
+        p = self.page
+        target = datetime.strptime(date_str, "%d-%m-%Y").date()
+
+        def _read_current():
+            date_input = p.locator("#banedato").first
+            raw = (date_input.input_value() or "").strip()
+            try:
+                return datetime.strptime(raw, "%d-%m-%Y").date()
+            except ValueError:
+                return None
+
+        current = _read_current()
+        if current is None:
+            p.evaluate('() => { if (typeof sende==="function") sende("admin_baner.asp","dd","","","",""); }')
+            p.wait_for_load_state("networkidle")
+            p.wait_for_timeout(1500)
+            current = _read_current()
+
+        if current is not None and current != target:
+            delta = (target - current).days
+            action = "dagfrem" if delta > 0 else "dagback"
+            for _ in range(abs(delta)):
+                p.evaluate(f'() => {{ if (typeof sende==="function") sende("admin_baner.asp","{action}","","","",""); }}')
+                p.wait_for_load_state("networkidle")
+                p.wait_for_timeout(900)
+
+    def _hhmm_to_minutes(self, hhmm: str) -> int | None:
+        """Convert HH:MM to minutes since midnight, or None if invalid."""
+        m = re.match(r"^(\d{1,2}):(\d{2})$", (hhmm or "").strip())
+        if not m:
+            return None
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            return None
+        return hour * 60 + minute
+
     def _time_add_minutes(self, hhmm: str, minutes: int) -> str:
         """Return HH:MM plus ``minutes`` (24h wraparound)."""
         m = re.match(r"^(\d{1,2}):(\d{2})$", (hhmm or "").strip())
