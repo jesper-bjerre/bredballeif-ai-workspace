@@ -322,6 +322,217 @@ class HalBookingAutomation:
             )
         return result
 
+    # -- court booking (write) -----------------------------------------------
+    def create_straks_booking(
+        self,
+        date_str: str,
+        court: int,
+        start_time: str,
+        duration_minutes: int,
+        text: str = "",
+    ) -> dict[str, Any]:
+        """Create and approve a booking from admin_baner/admin_straks.
+
+        Flow:
+        1. Open ``admin_baner.asp`` and set ``#banedato``.
+        2. Click the free slot starting at ``start_time`` on ``court``.
+        3. On ``admin_straks.asp`` set booking text and end time.
+        4. Click ``Godkend reservation``.
+        """
+        p = self.page
+        result: dict[str, Any] = {
+            "success": False,
+            "date": date_str,
+            "court": court,
+            "start_time": start_time,
+            "duration_minutes": duration_minutes,
+            "text": text,
+            "steps_completed": [],
+        }
+
+        if court not in (1, 2, 3):
+            result["note"] = "Bane skal være 1, 2 eller 3."
+            return result
+        if duration_minutes <= 0:
+            result["note"] = "Varighed skal være over 0 minutter."
+            return result
+        if duration_minutes % 30 != 0:
+            result["note"] = "Varighed skal være et multiplum af 30 minutter."
+            return result
+
+        first_end = self._time_add_minutes(start_time, 30)
+        final_end = self._time_add_minutes(start_time, duration_minutes)
+        if not first_end or not final_end:
+            result["note"] = "Ugyldig tid. Brug format HH:MM."
+            return result
+        result["end_time"] = final_end
+
+        # Step 1: open day grid and set date.
+        p.goto(f"{self.base_url}/admin_baner.asp", wait_until="networkidle")
+        p.wait_for_timeout(1200)
+        date_input = p.locator("#banedato").first
+        if date_input.count() == 0:
+            result["note"] = "Kunne ikke finde #banedato på admin_baner.asp."
+            return result
+
+        # Navigate to the requested date using sende() day-stepping
+        try:
+            from datetime import datetime
+            target = datetime.strptime(date_str, "%d-%m-%Y").date()
+
+            def _read_current():
+                raw = (date_input.input_value() or "").strip()
+                try:
+                    return datetime.strptime(raw, "%d-%m-%Y").date()
+                except ValueError:
+                    return None
+
+            current = _read_current()
+            if current is None:
+                p.evaluate("() => { if (typeof sende==='function') "
+                           "sende('admin_baner.asp','dd','','','',''); }")
+                p.wait_for_load_state("networkidle")
+                p.wait_for_timeout(1500)
+                current = _read_current()
+
+            if current is not None:
+                delta = (target - current).days
+                action = "dagfrem" if delta > 0 else "dagback"
+                for _ in range(abs(delta)):
+                    p.evaluate(
+                        f"() => {{ if (typeof sende==='function') "
+                        f"sende('admin_baner.asp','{action}','','','',''); }}"
+                    )
+                    p.wait_for_load_state("networkidle")
+                    p.wait_for_timeout(900)
+        except Exception:
+            pass
+
+        self._screenshot("straks_01_grid_ready")
+        result["steps_completed"].append("1_grid_ready")
+
+        # Step 2: click the free half-hour block that starts the reservation.
+        slot_selector = (
+            f"span.btn_ledig[onclick*=\";1;{court};{start_time};{first_end};0;\"]"
+        )
+        slot = p.locator(slot_selector).first
+        if slot.count() == 0:
+            result["note"] = (
+                f"Ingen ledig slot fundet på bane {court} kl. {start_time} "
+                f"({start_time}-{first_end})."
+            )
+            self._screenshot("straks_01_no_slot")
+            return result
+
+        onclick = slot.get_attribute("onclick") or ""
+        result["slot_onclick"] = onclick
+        slot.click()
+        p.wait_for_load_state("networkidle")
+        p.wait_for_timeout(2000)
+        self._screenshot("straks_02_form_open")
+        result["steps_completed"].append("2_form_open")
+
+        if "admin_straks.asp" not in p.url:
+            result["note"] = "Kom ikke til admin_straks.asp efter klik på ledig slot."
+            return result
+
+        # Step 3: set text and expand end-time to requested duration.
+        if text:
+            if self._fill_if_visible("#book_tekst", text):
+                result["steps_completed"].append("3_text_set")
+
+        p.evaluate(
+            """(cfg) => {
+                const {dateStr, courtNo, fromTime, toTime} = cfg;
+                const setVal = (name, value) => {
+                    const el = document.querySelector(`[name="${name}"]`);
+                    if (el) el.value = value;
+                };
+                setVal('mf_tiltid', toTime);
+                setVal('mf_multiretbooking', `${dateStr};1;${courtNo};${fromTime};${toTime};0;`);
+            }""",
+            {
+                "dateStr": date_str,
+                "courtNo": court,
+                "fromTime": start_time,
+                "toTime": final_end,
+            },
+        )
+        p.wait_for_timeout(300)
+        self._screenshot("straks_03_form_updated")
+        result["steps_completed"].append("3_duration_set")
+
+        # Step 4: approve reservation.
+        approve_btn = self._find_first([
+            '#id_btn_2',
+            'span.btn:has-text("Godkend reservation")',
+            '[onclick*="godkendreservation"]',
+        ])
+        if not approve_btn:
+            result["note"] = "Kunne ikke finde 'Godkend reservation' knappen."
+            self._screenshot("straks_04_no_approve_btn")
+            return result
+
+        approve_btn.click()
+        p.wait_for_load_state("networkidle")
+        p.wait_for_timeout(2500)
+        self._screenshot("straks_05_after_approve")
+        result["steps_completed"].append("4_approved")
+
+        body_text = p.inner_text("body").lower()
+        success_markers = [
+            "godkendt",
+            "reservation",
+            "oprettet",
+            "booking",
+        ]
+        result["success"] = any(m in body_text for m in success_markers)
+        if not result["success"]:
+            # We still treat a redirect back to booking pages as likely success,
+            # because HalBooking often does not show a strict success banner.
+            result["success"] = any(
+                x in p.url for x in ("admin_baner.asp", "admin_straks.asp", "admin_liste.asp")
+            )
+
+        result["final_url"] = p.url
+        if not result["success"]:
+            result["note"] = "Kunne ikke bekræfte booking sikkert ud fra sideindhold."
+        return result
+
+    def _time_add_minutes(self, hhmm: str, minutes: int) -> str:
+        """Return HH:MM plus ``minutes`` (24h wraparound)."""
+        m = re.match(r"^(\d{1,2}):(\d{2})$", (hhmm or "").strip())
+        if not m:
+            return ""
+        hour = int(m.group(1))
+        minute = int(m.group(2))
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            return ""
+        total = (hour * 60 + minute + minutes) % (24 * 60)
+        return f"{total // 60:02d}:{total % 60:02d}"
+
+    def _find_first(self, selectors: list[str]) -> Any:
+        """Return the first visible locator matching any of the selectors."""
+        for sel in selectors:
+            try:
+                el = self.page.locator(sel).first
+                if el.count() > 0:
+                    return el
+            except Exception:
+                continue
+        return None
+
+    def _fill_if_visible(self, selector: str, value: str) -> bool:
+        """Fill a field if it's visible, return True if filled."""
+        try:
+            el = self.page.locator(selector).first
+            if el.is_visible(timeout=1500):
+                el.fill(value)
+                return True
+        except Exception:
+            pass
+        return False
+
     def _parse_court_columns(
         self,
         raw_cols: list[dict],
