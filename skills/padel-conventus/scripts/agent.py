@@ -286,6 +286,64 @@ def cmd_compare(args: argparse.Namespace) -> None:  # noqa: ARG001
     print("    Brug padel-halbooking/analyze_memberships.py eller padel-halbooking export + padel-conventus stats.")
 
 
+def cmd_create_americano(args: argparse.Namespace) -> None:
+    """Create an Americano event group in Conventus via browser automation."""
+    from conventus_group_automation import create_americano
+
+    result = create_americano(
+        title=args.title,
+        date=args.date,
+        max_participants=args.max,
+        description=args.description,
+        price=args.price,
+        headless=not args.no_headless,
+    )
+    if result.success:
+        print(f"\n✅ Americano oprettet!")
+        print(f"   Gruppe ID: {result.group_id}")
+        print(f"   Edit URL:  {result.edit_url}")
+    else:
+        print(f"\n❌ Fejl: {result.error}")
+        sys.exit(1)
+
+
+def cmd_create_group(args: argparse.Namespace) -> None:
+    """Create a generic group in Conventus via browser automation."""
+    from conventus_group_automation import ConventusGroupAutomation, GroupConfig
+
+    config = GroupConfig(
+        title=args.title,
+        date_from=args.date_from,
+        date_to=args.date_to or args.date_from,
+        department_id=args.department,
+        activity_id=args.activity,
+        max_participants=args.max,
+        description=args.description,
+        price=args.price,
+        public=not args.no_public,
+        waiting_list=not args.no_waiting_list,
+        payment_required=not args.no_payment,
+    )
+
+    auto = ConventusGroupAutomation(headless=not args.no_headless)
+    try:
+        auto.start()
+        if not auto.login():
+            print("❌ Login fejlede")
+            sys.exit(1)
+        result = auto.create_group(config)
+        if result.success and result.group_id:
+            auto.edit_group(result.group_id, config)
+        if result.success:
+            print(f"\n✅ Gruppe oprettet! ID: {result.group_id}")
+            print(f"   Edit URL: {result.edit_url}")
+        else:
+            print(f"\n❌ Fejl: {result.error}")
+            sys.exit(1)
+    finally:
+        auto.stop()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Conventus membership query agent")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -300,6 +358,28 @@ def main() -> None:
     sub.add_parser("stats", help="Show membership statistics per year with churn analysis (2021-2026)")
     sub.add_parser("compare", help="Compare Conventus vs HalBooking — show members only in one system")
 
+    p_americano = sub.add_parser("create-americano", help="Create an Americano event in Conventus (browser automation)")
+    p_americano.add_argument("--title", required=True, help="Event title")
+    p_americano.add_argument("--date", required=True, help="Date (dd-mm-yyyy)")
+    p_americano.add_argument("--max", type=int, default=12, help="Max participants (default: 12)")
+    p_americano.add_argument("--description", default="", help="Event description")
+    p_americano.add_argument("--price", default="", help="Price (e.g. 50)")
+    p_americano.add_argument("--no-headless", action="store_true", help="Show browser window")
+
+    p_create = sub.add_parser("create-group", help="Create a group in Conventus (browser automation)")
+    p_create.add_argument("--title", required=True)
+    p_create.add_argument("--date-from", required=True)
+    p_create.add_argument("--date-to", default="")
+    p_create.add_argument("--department", default="55804")
+    p_create.add_argument("--activity", default="371")
+    p_create.add_argument("--max", type=int, default=0)
+    p_create.add_argument("--description", default="")
+    p_create.add_argument("--price", default="")
+    p_create.add_argument("--no-public", action="store_true")
+    p_create.add_argument("--no-waiting-list", action="store_true")
+    p_create.add_argument("--no-payment", action="store_true")
+    p_create.add_argument("--no-headless", action="store_true")
+
     args = parser.parse_args()
 
     if args.action == "search":
@@ -310,6 +390,10 @@ def main() -> None:
         cmd_stats(args)
     elif args.action == "compare":
         cmd_compare(args)
+    elif args.action == "create-americano":
+        cmd_create_americano(args)
+    elif args.action == "create-group":
+        cmd_create_group(args)
 
 
 if __name__ == "__main__":
