@@ -28,11 +28,24 @@ python -m agent list --group all
 python -m agent stats
 
 # Gruppeoprettelse (browser automation — kræver Playwright)
+
+## Americano / Mexicano events (duplikering fra template)
+
+Americano og Mexicano events oprettes ved at **duplikere en template-gruppe** via
+`grp_dupliker.php`. Templaten har alle standard-indstillinger forpræget
+(beskrivelse, synlighed, venteliste, betaling mv.).
+
+```bash
 python -m agent create-americano \
   --title "Americano Herrer den 7. juli kl. 19:00-21:00" \
   --date "07-07-2026" \
   --max 12 \
-  --description "Kom og spil Americano!" \
+  --price "50"
+
+python -m agent create-mexicano \
+  --title "Mexicano Mix den 8. juli kl. 18:00-20:00" \
+  --date "08-07-2026" \
+  --max 12 \
   --price "50"
 
 python -m agent create-americano \
@@ -40,8 +53,17 @@ python -m agent create-americano \
   --date "07-07-2026" \
   --max 12 \
   --no-headless   # vis browser-vinduet til debugging
+```
 
-# Generisk gruppeoprettelse
+Template gruppe-ID'er (defineret i `conventus_group_automation.py`):
+- Americano: `TEMPLATE_AMERICANO = "1049833"`
+- Mexicano: `TEMPLATE_MEXICANO = "1049833"` (TODO: opdater med rigtigt ID)
+
+## Generisk gruppeoprettelse (fra bunden)
+
+Bruges til træningshold og andre grupper der ikke har en template.
+
+```bash
 python -m agent create-group \
   --title "Træningshold Tirsdag" \
   --date-from "01-09-2026" \
@@ -58,6 +80,7 @@ OpenClaw/Linux kan whiteliste:
 ./bin/padel-conventus.sh list --group all
 ./bin/padel-conventus.sh stats
 ./bin/padel-conventus.sh create-americano --title "Americano" --date "07-07-2026"
+./bin/padel-conventus.sh create-mexicano --title "Mexicano" --date "07-07-2026"
 ```
 
 ## Gruppealiaser

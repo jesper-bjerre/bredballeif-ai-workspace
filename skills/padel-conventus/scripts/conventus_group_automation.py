@@ -23,8 +23,10 @@ from dotenv import load_dotenv
 from playwright.sync_api import (
     Browser,
     BrowserContext,
+    Locator,
     Page,
     Playwright,
+    TimeoutError as PlaywrightTimeout,
     sync_playwright,
 )
 
@@ -40,6 +42,11 @@ AFDELING_PADEL = "55804"
 CONVENTUS_BASE = "https://www.conventus.dk"
 LOGIN_URL = f"{CONVENTUS_BASE}/login/index.php"
 LOGGEDIN_BASE = f"{CONVENTUS_BASE}/login/loggedin.php"
+POPUP_BASE = f"{CONVENTUS_BASE}/login/popup.php"
+
+# Template group IDs for event types — these are duplicated via grp_dupliker.php
+TEMPLATE_AMERICANO = "1049833"
+TEMPLATE_MEXICANO = "1049833"  # TODO: update with actual Mexicano template ID
 
 
 def _to_date_input_format(date_str: str) -> str:
@@ -314,8 +321,6 @@ class ConventusGroupAutomation:
 
     def _find_input_in_any_frame(self, name: str, timeout: float = 5000) -> "Locator | None":
         """Search for an input[name=X] in the main page and all iframes."""
-        from playwright.sync_api import Locator, TimeoutError as PlaywrightTimeout
-
         p = self.page
 
         # Try main frame first
@@ -578,6 +583,289 @@ class ConventusGroupAutomation:
         print("[+] Group edit completed")
         return True
 
+    # -- group duplication ---------------------------------------------------
+    def duplicate_group(
+        self,
+        template_id: str,
+        new_title: str,
+        date_from: str,
+        date_to: str,
+    ) -> GroupResult:
+        """Duplicate an existing group as a template for a new event.
+
+        Used for Americano/Mexicano events where a template group already has
+        the correct settings (description, price, visibility, etc.).
+
+        Navigates to popup.php?page=adressebog/medlemmer/grp_dupliker.php&idv1=TEMPLATE_ID,
+        fills in the new title and dates, unchecks 'arkiv', and clicks 'Udfør'.
+
+        Args:
+            template_id: The source group ID to duplicate
+            new_title: Title for the new group
+            date_from: Start date (DD-MM-YYYY, converted to YYYY-MM-DD for date inputs)
+            date_to: End date (DD-MM-YYYY, converted to YYYY-MM-DD for date inputs)
+        """
+        p = self.page
+
+        dup_url = f"{POPUP_BASE}?page=adressebog/medlemmer/grp_dupliker.php&idv1={template_id}"
+        print(f"[*] Navigating to duplicate page: {dup_url}")
+        p.goto(dup_url, wait_until="networkidle")
+        self._wait_for_stable(2000)
+        self._screenshot("12_duplicate_form")
+        self._debug_page_state("duplicate")
+
+        # Fill new title
+        title_field = self._find_input_in_any_frame("ny_titel")
+        if title_field is None:
+            try:
+                title_field = p.locator('#ny_titel, input[name="ny_titel"]')
+                title_field.wait_for(state="visible", timeout=3000)
+            except Exception:
+                pass
+        if title_field is None:
+            self._screenshot("12b_ny_titel_missing")
+            return GroupResult(
+                success=False,
+                error="Could not find 'ny_titel' field on duplicate page",
+            )
+        title_field.fill(new_title)
+        print(f"[*] Filled ny_titel: {new_title}")
+
+        # Convert dates to ISO for HTML date inputs
+        start_iso = _to_date_input_format(date_from)
+        slut_iso = _to_date_input_format(date_to)
+
+        # Fill start date
+        start_field = self._find_input_in_any_frame("startdd")
+        if start_field is None:
+            try:
+                start_field = p.locator('#startdd, input[name="startdd"]')
+                start_field.wait_for(state="visible", timeout=2000)
+            except Exception:
+                pass
+        if start_field:
+            start_field.fill(start_iso)
+            print(f"[*] Filled startdd: {start_iso}")
+        else:
+            print("[!] Could not find startdd field")
+
+        # Fill end date
+        slut_field = self._find_input_in_any_frame("slutdd")
+        if slut_field is None:
+            try:
+                slut_field = p.locator('#slutdd, input[name="slutdd"]')
+                slut_field.wait_for(state="visible", timeout=2000)
+            except Exception:
+                pass
+        if slut_field:
+            slut_field.fill(slut_iso)
+            print(f"[*] Filled slutdd: {slut_iso}")
+        else:
+            print("[!] Could not find slutdd field")
+
+        # Uncheck 'arkiv' checkbox (we don't want the new group archived)
+        arkiv_cb = p.locator('#arkiv, input[name="arkiv"]')
+        if arkiv_cb.is_visible(timeout=2000):
+            if arkiv_cb.is_checked():
+                arkiv_cb.uncheck()
+                print("[*] Unchecked 'arkiv'")
+            else:
+                print("[*] 'arkiv' already unchecked")
+        else:
+            print("[!] Could not find arkiv checkbox")
+
+        self._screenshot("13_duplicate_filled")
+
+        # Click "Udfør" button and capture any redirect to grp_edit.php
+        udfoer_btn = p.locator('button:has-text("Udfør"), input[value="Udfør"]').first
+        if not udfoer_btn.is_visible(timeout=3000):
+            submit_btn = p.locator('input[type="submit"]').first
+            if submit_btn.is_visible(timeout=2000):
+                udfoer_btn = submit_btn
+            else:
+                return GroupResult(success=False, error="Could not find 'Udfør' button")
+
+        # Set up response capturing before clicking — the server may redirect
+        # to grp_edit.php with the new group ID in the Location header
+        captured_group_id: str | None = None
+
+        def _capture_response(response):
+            nonlocal captured_group_id
+            url = response.url
+            if "grp_edit.php" in url or "grp_dupliker" in url:
+                m = re.search(r"idv1=(\d+)", url)
+                if m:
+                    gid = m.group(1)
+                    if gid != AFDELING_PADEL and gid != template_id:
+                        captured_group_id = gid
+                        print(f"[D] Captured potential group ID from response: {gid} (URL: {url[:100]})")
+            # Also check redirect Location header
+            location = response.headers.get("location", "")
+            if location and "grp_edit.php" in location:
+                m = re.search(r"idv1=(\d+)", location)
+                if m:
+                    gid = m.group(1)
+                    if gid != AFDELING_PADEL and gid != template_id:
+                        captured_group_id = gid
+                        print(f"[D] Captured group ID from redirect Location: {gid}")
+
+        p.on("response", _capture_response)
+        udfoer_btn.click()
+        print("[*] Clicked 'Udfør'")
+
+        # Wait for the popup to close and redirect
+        self._wait_for_stable(3000)
+        p.remove_listener("response", _capture_response)
+        self._screenshot("14_after_duplicate")
+        self._debug_page_state("after_duplicate")
+
+        # If we captured a group ID from a response, use it
+        if captured_group_id:
+            print(f"[+] Group duplicated with ID (captured): {captured_group_id}")
+            return GroupResult(
+                success=True,
+                group_id=captured_group_id,
+                edit_url=f"{LOGGEDIN_BASE}?page=adressebog/medlemmer/grp_edit.php&idv1={captured_group_id}",
+            )
+
+        # Extract new group ID — the popup may close itself and redirect.
+        # Try multiple strategies to find the new group ID.
+        group_id = self._extract_group_id()
+        if group_id:
+            print(f"[+] Group duplicated with ID: {group_id}")
+            return GroupResult(
+                success=True,
+                group_id=group_id,
+                edit_url=f"{LOGGEDIN_BASE}?page=adressebog/medlemmer/grp_edit.php&idv1={group_id}",
+            )
+
+        # Strategy 2: Search the full page HTML for the new group ID.
+        # Only accept IDs higher than the template ID (new groups get higher IDs).
+        content = p.content()
+        all_ids = re.findall(r"idv1=(\d{5,8})", content)
+        template_id_int = int(template_id)
+        for gid in all_ids:
+            if gid != AFDELING_PADEL and gid != template_id:
+                try:
+                    if int(gid) > template_id_int:
+                        group_id = gid
+                        print(f"[+] Found new group ID in HTML: {group_id}")
+                        return GroupResult(
+                            success=True,
+                            group_id=group_id,
+                            edit_url=f"{LOGGEDIN_BASE}?page=adressebog/medlemmer/grp_edit.php&idv1={group_id}",
+                        )
+                except ValueError:
+                    pass
+
+        # Strategy 3: Navigate to the Padel department's group list by finding
+        # the correct URL from the sidebar iframe.
+        # First try the department overview — it may list groups in the main content.
+        dept_url = f"{LOGGEDIN_BASE}?page=adressebog/medlemmer/start.php&idv1={AFDELING_PADEL}"
+        print(f"[*] Navigating to department page: {dept_url}")
+        p.goto(dept_url, wait_until="networkidle")
+        self._wait_for_stable(2000)
+        self._debug_page_state("dept_page")
+
+        # Check if groups are listed in the main content
+        links = p.locator('a[href*="grp_edit.php"]').all()
+        # Also check inside iframes (white.php sidebar may have group links)
+        for frame in p.frames:
+            if frame != p.main_frame:
+                try:
+                    frame_links = frame.locator('a[href*="grp_edit.php"]').all()
+                    links.extend(frame_links)
+                except Exception:
+                    pass
+
+        if links:
+            for link in links:
+                href = link.get_attribute("href") or ""
+                m = re.search(r"idv1=(\d+)", href)
+                if m:
+                    gid = m.group(1)
+                    try:
+                        if gid != AFDELING_PADEL and gid != template_id and int(gid) > template_id_int:
+                            link_text = (link.text_content() or "").strip()
+                            group_id = gid
+                            print(f"[+] Found new group in list: {link_text} (ID: {group_id})")
+                            return GroupResult(
+                                success=True,
+                                group_id=group_id,
+                                edit_url=f"{LOGGEDIN_BASE}?page=adressebog/medlemmer/grp_edit.php&idv1={group_id}",
+                            )
+                    except ValueError:
+                        pass
+
+        # Strategy 4: Look for the sidebar's "Padel" department link which has
+        # a submenu. Click it to expand, then find group links.
+        # The sidebar is in the white.php iframe.
+        for frame in p.frames:
+            if "white.php" in frame.url:
+                try:
+                    # Find and click the "Padel" or department link to expand it
+                    padel_link = frame.locator(f'a:has-text("Padel"), a[href*="{AFDELING_PADEL}"]').first
+                    if padel_link.is_visible(timeout=2000):
+                        padel_link.click()
+                        p.wait_for_timeout(1500)
+                        self._screenshot("15_sidebar_expanded")
+                        # Now look for group links in the expanded sidebar
+                        for f in p.frames:
+                            if f != p.main_frame:
+                                try:
+                                    sb_links = f.locator('a[href*="grp_edit.php"]').all()
+                                    links.extend(sb_links)
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+
+        # Re-check after sidebar expansion
+        for link in links:
+            href = link.get_attribute("href") or ""
+            m = re.search(r"idv1=(\d+)", href)
+            if m:
+                gid = m.group(1)
+                try:
+                    if gid != AFDELING_PADEL and gid != template_id and int(gid) > template_id_int:
+                        link_text = (link.text_content() or "").strip()
+                        group_id = gid
+                        print(f"[+] Found new group after expanding sidebar: {link_text} (ID: {group_id})")
+                        return GroupResult(
+                            success=True,
+                            group_id=group_id,
+                            edit_url=f"{LOGGEDIN_BASE}?page=adressebog/medlemmer/grp_edit.php&idv1={group_id}",
+                        )
+                except ValueError:
+                    pass
+
+        # Strategy 4: Search full page content on the department page for our
+        # new title near an idv1= link
+        dept_content = p.content()
+        new_title_escaped = re.escape(new_title)
+        m = re.search(
+            rf"{new_title_escaped}.*?idv1=(\d+)", dept_content, re.DOTALL
+        )
+        if not m:
+            m = re.search(
+                rf"idv1=(\d+).*?{new_title_escaped}", dept_content, re.DOTALL
+            )
+        if m:
+            group_id = m.group(1)
+            if group_id != AFDELING_PADEL and group_id != template_id:
+                print(f"[+] Found group ID near title in HTML: {group_id}")
+                return GroupResult(
+                    success=True,
+                    group_id=group_id,
+                    edit_url=f"{LOGGEDIN_BASE}?page=adressebog/medlemmer/grp_edit.php&idv1={group_id}",
+                )
+
+        self._screenshot("14b_missing_group_id")
+        return GroupResult(
+            success=True,
+            error="Group likely duplicated but could not extract ID — check screenshots",
+        )
+
 
 # ---------------------------------------------------------------------------
 # High-level convenience functions
@@ -590,31 +878,22 @@ def create_americano(
     price: str = "",
     headless: bool = True,
 ) -> GroupResult:
-    """Create an Americano event group in Conventus.
+    """Create an Americano event group in Conventus by duplicating the template.
+
+    Duplicates TEMPLATE_AMERICANO (which has all the standard Americano settings
+    pre-configured) and then adjusts max participants + price for this event.
 
     Args:
         title: Event title, e.g. "Americano Herrer den 7. juli kl. 19:00-21:00"
         date: Date in dd-mm-yyyy format, e.g. "07-07-2026"
         max_participants: Maximum number of participants (default 12 for Americano)
-        description: Event description text
+        description: Event description text (optional — template already has one)
         price: Event price, e.g. "50"
         headless: Run browser in headless mode
 
     Returns:
         GroupResult with success status and group ID
     """
-    config = GroupConfig(
-        title=title,
-        date_from=date,
-        date_to=date,
-        max_participants=max_participants,
-        description=description,
-        price=price,
-        public=True,
-        waiting_list=True,
-        payment_required=True,
-    )
-
     auto = ConventusGroupAutomation(headless=headless)
     try:
         auto.start()
@@ -623,16 +902,80 @@ def create_americano(
         if not auto.login():
             return GroupResult(success=False, error="Login failed")
 
-        # Create the group
-        result = auto.create_group(config)
+        # Duplicate from template
+        result = auto.duplicate_group(
+            template_id=TEMPLATE_AMERICANO,
+            new_title=title,
+            date_from=date,
+            date_to=date,
+        )
         if not result.success:
             return result
 
-        # Edit the group with additional settings
+        # Post-duplication: always edit to ensure Offentlig=Ja and set custom params
         if result.group_id:
+            config = GroupConfig(
+                title=title,
+                date_from=date,
+                date_to=date,
+                max_participants=max_participants,
+                description=description,
+                price=price,
+                public=True,
+            )
             auto.edit_group(result.group_id, config)
         else:
-            print("[!] No group ID found — skipping edit step. Manual edit may be needed.")
+            print("[!] No group ID found — skipping post-edit. Manual edit may be needed.")
+
+        return result
+    except Exception as e:
+        return GroupResult(success=False, error=str(e))
+    finally:
+        auto.stop()
+
+
+def create_mexicano(
+    title: str,
+    date: str,
+    max_participants: int = 12,
+    description: str = "",
+    price: str = "",
+    headless: bool = True,
+) -> GroupResult:
+    """Create a Mexicano event group in Conventus by duplicating the template.
+
+    Same as create_americano but uses TEMPLATE_MEXICANO.
+    """
+    auto = ConventusGroupAutomation(headless=headless)
+    try:
+        auto.start()
+
+        if not auto.login():
+            return GroupResult(success=False, error="Login failed")
+
+        result = auto.duplicate_group(
+            template_id=TEMPLATE_MEXICANO,
+            new_title=title,
+            date_from=date,
+            date_to=date,
+        )
+        if not result.success:
+            return result
+
+        # Post-duplication: always edit to ensure Offentlig=Ja and set custom params
+        if result.group_id:
+            config = GroupConfig(
+                title=title,
+                date_from=date,
+                date_to=date,
+                max_participants=max_participants,
+                description=description,
+                price=price,
+                public=True,
+            )
+            auto.edit_group(result.group_id, config)
+        else:
+            print("[!] No group ID found — skipping post-edit. Manual edit may be needed.")
 
         return result
     except Exception as e:
@@ -676,6 +1019,14 @@ def _parse_args() -> Any:
     p_create.add_argument("--no-payment", action="store_true")
     p_create.add_argument("--no-headless", action="store_true")
 
+    p_mexicano = sub.add_parser("create-mexicano", help="Create a Mexicano event (duplicates template)")
+    p_mexicano.add_argument("--title", required=True, help="Event title")
+    p_mexicano.add_argument("--date", required=True, help="Date (dd-mm-yyyy)")
+    p_mexicano.add_argument("--max", type=int, default=12, help="Max participants (default: 12)")
+    p_mexicano.add_argument("--description", default="", help="Event description")
+    p_mexicano.add_argument("--price", default="", help="Price (e.g. 50)")
+    p_mexicano.add_argument("--no-headless", action="store_true", help="Show browser window")
+
     return parser.parse_args()
 
 
@@ -693,6 +1044,23 @@ def main() -> None:
         )
         if result.success:
             print(f"\n✅ Americano oprettet!")
+            print(f"   Gruppe ID: {result.group_id}")
+            print(f"   Edit URL:  {result.edit_url}")
+        else:
+            print(f"\n❌ Fejl: {result.error}")
+            sys.exit(1)
+
+    elif args.action == "create-mexicano":
+        result = create_mexicano(
+            title=args.title,
+            date=args.date,
+            max_participants=args.max,
+            description=args.description,
+            price=args.price,
+            headless=not args.no_headless,
+        )
+        if result.success:
+            print(f"\n✅ Mexicano oprettet!")
             print(f"   Gruppe ID: {result.group_id}")
             print(f"   Edit URL:  {result.edit_url}")
         else:

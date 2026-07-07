@@ -307,6 +307,27 @@ def cmd_create_americano(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_create_mexicano(args: argparse.Namespace) -> None:
+    """Create a Mexicano event group in Conventus via browser automation (duplicates template)."""
+    from conventus_group_automation import create_mexicano
+
+    result = create_mexicano(
+        title=args.title,
+        date=args.date,
+        max_participants=args.max,
+        description=args.description,
+        price=args.price,
+        headless=not args.no_headless,
+    )
+    if result.success:
+        print(f"\n✅ Mexicano oprettet!")
+        print(f"   Gruppe ID: {result.group_id}")
+        print(f"   Edit URL:  {result.edit_url}")
+    else:
+        print(f"\n❌ Fejl: {result.error}")
+        sys.exit(1)
+
+
 def cmd_create_group(args: argparse.Namespace) -> None:
     """Create a generic group in Conventus via browser automation."""
     from conventus_group_automation import ConventusGroupAutomation, GroupConfig
@@ -358,13 +379,21 @@ def main() -> None:
     sub.add_parser("stats", help="Show membership statistics per year with churn analysis (2021-2026)")
     sub.add_parser("compare", help="Compare Conventus vs HalBooking — show members only in one system")
 
-    p_americano = sub.add_parser("create-americano", help="Create an Americano event in Conventus (browser automation)")
+    p_americano = sub.add_parser("create-americano", help="Create an Americano event (duplicates template)")
     p_americano.add_argument("--title", required=True, help="Event title")
     p_americano.add_argument("--date", required=True, help="Date (dd-mm-yyyy)")
     p_americano.add_argument("--max", type=int, default=12, help="Max participants (default: 12)")
     p_americano.add_argument("--description", default="", help="Event description")
     p_americano.add_argument("--price", default="", help="Price (e.g. 50)")
     p_americano.add_argument("--no-headless", action="store_true", help="Show browser window")
+
+    p_mexicano = sub.add_parser("create-mexicano", help="Create a Mexicano event (duplicates template)")
+    p_mexicano.add_argument("--title", required=True, help="Event title")
+    p_mexicano.add_argument("--date", required=True, help="Date (dd-mm-yyyy)")
+    p_mexicano.add_argument("--max", type=int, default=12, help="Max participants (default: 12)")
+    p_mexicano.add_argument("--description", default="", help="Event description")
+    p_mexicano.add_argument("--price", default="", help="Price (e.g. 50)")
+    p_mexicano.add_argument("--no-headless", action="store_true", help="Show browser window")
 
     p_create = sub.add_parser("create-group", help="Create a group in Conventus (browser automation)")
     p_create.add_argument("--title", required=True)
@@ -392,6 +421,8 @@ def main() -> None:
         cmd_compare(args)
     elif args.action == "create-americano":
         cmd_create_americano(args)
+    elif args.action == "create-mexicano":
+        cmd_create_mexicano(args)
     elif args.action == "create-group":
         cmd_create_group(args)
 
