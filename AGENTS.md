@@ -54,8 +54,10 @@ sorterer samlet i GitHub-org-oversigten.
 | `bredballeif-ai-workspace` | **Dette repo** — monorepo for workspace, manifest, bootstrap, docs, agenter og primære skills |
 | `bif-padel-adm` | Eksisterende privat-historisk admin/drift + secrets (kan senere omdøbes `bredballeif-padel-adm`) |
 
-- Skill-mapper: **`skills/<navn>`** (lowercase, bindestreg), fx `skills/padel-baner`.
-- Skill-`name` i `SKILL.md`-frontmatter: samme korte slug, fx `padel-baner`.
+- Skill-mapper: **`skills/bredballeif-<navn>`** (lowercase, bindestreg), fx `skills/bredballeif-boerneattest`.
+- Padel-skills: **`skills/bredballeif-padel-<navn>`**, fx `skills/bredballeif-padel-baner`.
+- Skill-`name` i `SKILL.md`-frontmatter skal være identisk med mappenavnet.
+- Skillens titel skal indeholde `Bredballe IF`; Padel-skills skal bruge `Bredballe IF Padel` i titlen.
 - Nye BIF-skills oprettes som mapper i dette repo, medmindre der er en stærk grund til separat distribution.
 
 ---
@@ -72,7 +74,7 @@ bredballeif-ai-workspace/
   scripts/sync_skills.ps1    # opretter lokale discovery-links til skills/
   AGENTS.md                  # denne fil (kanonisk)
   skills/
-    padel-baner/
+    bredballeif-padel-baner/
       SKILL.md
       scripts/
       bin/
@@ -106,8 +108,8 @@ skills/<navn>/
 {
   "skills": [
     {
-      "name": "padel-baner",
-      "source": "skills/padel-baner",
+      "name": "bredballeif-padel-baner",
+      "source": "skills/bredballeif-padel-baner",
       "targets": [".github/skills", ".claude/skills"]
     }
   ]
@@ -156,13 +158,13 @@ persondata i git.**
 
 1. Åbn `bredballeif-ai-workspace` i VS Code.
 2. Kør `pwsh scripts/sync_skills.ps1` for at oprette lokale discovery-links til Copilot/Claude.
-3. Rediger skillen i dens kanoniske mappe, fx `skills/padel-baner/`.
+3. Rediger skillen i dens kanoniske mappe, fx `skills/bredballeif-padel-baner/`.
 4. Test den agent-neutrale entrypoint direkte:
    ```powershell
-   $env:PYTHONPATH = "skills/padel-baner/scripts"
+   $env:PYTHONPATH = "skills/bredballeif-padel-baner/scripts"
    python -m <modul> <action> ...
    ```
-   — eller via wrapper: `skills/padel-baner/bin/padel-baner.ps1 ...`
+   — eller via wrapper: `skills/bredballeif-padel-baner/bin/bredballeif-padel-baner.ps1 ...`
 5. Test skill-adfærd i Copilot og ideelt kort i mindst én anden agent (Claude Code/Codex), så
    `SKILL.md` er verificeret agent-neutral.
 6. Commit + push i **dette repo**. Ændringer på tværs af flere skills, manifest og docs kan nu lande i

@@ -1,33 +1,38 @@
 {
   "skills": [
     {
-      "name": "padel-baner",
-      "source": "skills/padel-baner",
+      "name": "bredballeif-oekonomi",
+      "source": "skills/bredballeif-oekonomi",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
-      "name": "padel-conventus",
-      "source": "skills/padel-conventus",
+      "name": "bredballeif-padel-baner",
+      "source": "skills/bredballeif-padel-baner",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
-      "name": "padel-halbooking",
-      "source": "skills/padel-halbooking",
+      "name": "bredballeif-padel-conventus",
+      "source": "skills/bredballeif-padel-conventus",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
-      "name": "padel-onboarding",
-      "source": "skills/padel-onboarding",
+      "name": "bredballeif-padel-halbooking",
+      "source": "skills/bredballeif-padel-halbooking",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
-      "name": "boerneattest",
-      "source": "skills/boerneattest",
+      "name": "bredballeif-padel-onboarding",
+      "source": "skills/bredballeif-padel-onboarding",
       "targets": [".github/skills", ".claude/skills"]
     },
     {
-      "name": "padel-kontingent-beregner",
-      "source": "skills/padel-kontingent-beregner",
+      "name": "bredballeif-boerneattest",
+      "source": "skills/bredballeif-boerneattest",
+      "targets": [".github/skills", ".claude/skills"]
+    },
+    {
+      "name": "bredballeif-padel-kontingent-beregner",
+      "source": "skills/bredballeif-padel-kontingent-beregner",
       "targets": [".github/skills", ".claude/skills"]
     }
   ]

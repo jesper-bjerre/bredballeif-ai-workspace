@@ -15,8 +15,8 @@ fx via systemd env file, Docker secrets, OpenClaw secret store eller tilsvarende
 
 | OpenClaw agent | Telegram bot | Formål | Skills |
 |---|---|---|---|
-| `bredballeif-administrator` | `BIF Administrator` | Tværgående Bredballe IF administration | `skills/boerneattest` |
-| `bredballeif-padel-administrator` | `BIF Padel Administrator` | Padel-administration og padelmedlemskab | `skills/padel-baner`, `skills/padel-conventus`, `skills/padel-halbooking`, `skills/padel-onboarding` |
+| `bredballeif-administrator` | `BIF Administrator` | Tværgående Bredballe IF administration | `skills/bredballeif-boerneattest` |
+| `bredballeif-padel-administrator` | `BIF Padel Administrator` | Padel-administration og padelmedlemskab | `skills/bredballeif-padel-baner`, `skills/bredballeif-padel-conventus`, `skills/bredballeif-padel-halbooking`, `skills/bredballeif-padel-onboarding` |
 
 ## Installation på OpenClaw
 
@@ -37,11 +37,11 @@ python3 -m venv .venv
 Installer dependencies for de skills der bruges i OpenClaw:
 
 ```bash
-pip install -r skills/boerneattest/requirements.txt
-pip install -r skills/padel-baner/requirements.txt
-pip install -r skills/padel-conventus/requirements.txt
-pip install -r skills/padel-halbooking/requirements.txt
-pip install -r skills/padel-onboarding/requirements.txt
+pip install -r skills/bredballeif-boerneattest/requirements.txt
+pip install -r skills/bredballeif-padel-baner/requirements.txt
+pip install -r skills/bredballeif-padel-conventus/requirements.txt
+pip install -r skills/bredballeif-padel-halbooking/requirements.txt
+pip install -r skills/bredballeif-padel-onboarding/requirements.txt
 ```
 
 ## Runtime-miljø
@@ -70,13 +70,13 @@ OpenClaw skal whiteliste de konkrete wrappers, ikke `python`, `bash` eller brede
 Whitelist:
 
 ```text
-/opt/bredballeif-ai-workspace/skills/boerneattest/bin/boerneattest.sh
+/opt/bredballeif-ai-workspace/skills/bredballeif-boerneattest/bin/bredballeif-boerneattest.sh
 ```
 
 Skill:
 
 ```text
-/opt/bredballeif-ai-workspace/skills/boerneattest
+/opt/bredballeif-ai-workspace/skills/bredballeif-boerneattest
 ```
 
 ### `bredballeif-padel-administrator`
@@ -84,19 +84,19 @@ Skill:
 Whitelist:
 
 ```text
-/opt/bredballeif-ai-workspace/skills/padel-baner/bin/padel-baner.sh
-/opt/bredballeif-ai-workspace/skills/padel-conventus/bin/padel-conventus.sh
-/opt/bredballeif-ai-workspace/skills/padel-halbooking/bin/padel-halbooking.sh
-/opt/bredballeif-ai-workspace/skills/padel-onboarding/bin/padel-onboarding.sh
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-baner/bin/bredballeif-padel-baner.sh
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-conventus/bin/bredballeif-padel-conventus.sh
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-halbooking/bin/bredballeif-padel-halbooking.sh
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-onboarding/bin/bredballeif-padel-onboarding.sh
 ```
 
 Skills:
 
 ```text
-/opt/bredballeif-ai-workspace/skills/padel-baner
-/opt/bredballeif-ai-workspace/skills/padel-conventus
-/opt/bredballeif-ai-workspace/skills/padel-halbooking
-/opt/bredballeif-ai-workspace/skills/padel-onboarding
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-baner
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-conventus
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-halbooking
+/opt/bredballeif-ai-workspace/skills/bredballeif-padel-onboarding
 ```
 
 ## Telegram routing

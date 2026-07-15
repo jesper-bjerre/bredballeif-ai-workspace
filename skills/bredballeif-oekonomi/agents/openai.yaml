@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bredballe IF økonomi"
+  short_description: "Lav budget og opfølgning for BIF-afdelinger"
+  default_prompt: "Brug $bredballeif-oekonomi til at lave budgetopfølgning for en Bredballe IF-afdeling ud fra Conventus-data."

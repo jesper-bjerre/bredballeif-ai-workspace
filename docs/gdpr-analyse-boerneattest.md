@@ -1,8 +1,8 @@
-# GDPR-analyse: `skills/boerneattest`
+# GDPR-analyse: `skills/bredballeif-boerneattest`
 
 Dato: 06-07-2026  
 Status: Foreløbig GDPR-/risikovurdering, ikke juridisk rådgivning  
-Scope: Telegram-botten `BIF Administrator`, OpenClaw-agenten `bredballeif-administrator` og skillen `skills/boerneattest`
+Scope: Telegram-botten `BIF Administrator`, OpenClaw-agenten `bredballeif-administrator` og skillen `skills/bredballeif-boerneattest`
 
 ## Konklusion
 
@@ -22,7 +22,7 @@ De største forhold er:
 
 Anbefalet beslutning:
 
-- Fortsæt kun med `boerneattest` i OpenClaw, hvis dataflow, databehandleraftaler, adgangsstyring,
+- Fortsæt kun med `bredballeif-boerneattest` i OpenClaw, hvis dataflow, databehandleraftaler, adgangsstyring,
   logning, retention og Claude API-forhold er dokumenteret.
 - Brug "minimum nødvendigt output" som standard: helst antal, statusgrupper og navne kun på personer
   der kræver handling.
@@ -33,7 +33,7 @@ Anbefalet beslutning:
 1. Et bestyrelsesmedlem skriver til Telegram-botten `BIF Administrator`.
 2. Telegram sender beskeden til OpenClaw.
 3. OpenClaw kører agenten `bredballeif-administrator`.
-4. Agenten bruger `skills/boerneattest`.
+4. Agenten bruger `skills/bredballeif-boerneattest`.
 5. Skillen henter data fra Conventus via API.
 6. OpenClaw/agenten returnerer status eller handlingsliste til Telegram.
 
@@ -98,7 +98,7 @@ Vurdering:
 Anbefaling:
 
 - Design OpenClaw-flowet så Claude ikke modtager rå Conventus-data, hvis det kan undgås.
-- Lad helst `boerneattest`-scriptet danne et færdigt, dataminimeret svar, som sendes direkte tilbage.
+- Lad helst `bredballeif-boerneattest`-scriptet danne et færdigt, dataminimeret svar, som sendes direkte tilbage.
 - Hvis Claude skal formulere svaret, send kun minimalt tool-output: fx antal og navne på personer der kræver
   handling, ikke email/mobil/fødselsdato/Conventus-id.
 
@@ -169,12 +169,12 @@ OpenClaw-flowet er kun foreneligt med proceduren hvis:
 
 ## Anbefalede tekniske ændringer
 
-1. Tilføj eksplicit CPR-værn i `skills/boerneattest/SKILL.md`:
+1. Tilføj eksplicit CPR-værn i `skills/bredballeif-boerneattest/SKILL.md`:
    - Spørg aldrig efter CPR i Telegram.
    - Hvis brugeren indtaster CPR eller sidste 4 cifre, må agenten ikke gentage dem.
    - Agenten skal bede brugeren slette beskeden og bruge fysisk fremmøde, telefon, post eller anden godkendt kanal.
 
-2. Tilføj "Telegram-safe output" i `skills/boerneattest/scripts/agent.py`:
+2. Tilføj "Telegram-safe output" i `skills/bredballeif-boerneattest/scripts/agent.py`:
    - Skjul email, mobil, fødselsdato og Conventus-id som standard.
    - Vis navne kun når de kræver handling.
    - Vis `IKKE godkendt` som "kritisk status - kontakt daglig leder/HB" i Telegram-output.
@@ -259,7 +259,7 @@ Godt flow:
 
 1. Bestyrelsesmedlem skriver: "Lav børneattestkontrol for Padel".
 2. Claude/OpenClaw fortolker kun kommandoen.
-3. `boerneattest` henter data i Conventus.
+3. `bredballeif-boerneattest` henter data i Conventus.
 4. Scriptet beregner status lokalt.
 5. Scriptet returnerer et minimeret svar:
    - "5 relevante frivillige; 3 OK; 2 kræver fornyelse: [navne]. Ingen mangler i fællesgruppen."
@@ -278,7 +278,7 @@ Det dårlige flow bør blokeres teknisk og organisatorisk.
 
 | Prioritet | Handling | Status |
 |---|---|---|
-| 1 | Opdatér `boerneattest` skill med eksplicit CPR-forbud i Telegram | Åben |
+| 1 | Opdatér `bredballeif-boerneattest` skill med eksplicit CPR-forbud i Telegram | Åben |
 | 1 | Lav Telegram-safe output uden email/mobil/fødselsdato/Conventus-id | Åben |
 | 1 | Beslut om Claude må modtage navne/status; hvis ja, dokumentér DPA/SCC/retention/DPIA | Åben |
 | 1 | Gennemfør DPIA/konsekvensanalyse | Åben |
@@ -292,7 +292,7 @@ Det dårlige flow bør blokeres teknisk og organisatorisk.
 
 - Lokal guideline: `docs/guidelines/Procedure for indhentning af børneattester 03.12.25.pdf`
 - Lokal OpenClaw-beskrivelse: `docs/openclaw-setup.md`
-- Lokal skill: `skills/boerneattest/SKILL.md`
+- Lokal skill: `skills/bredballeif-boerneattest/SKILL.md`
 - GDPR artikel 10, 28, 32 og 35: https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng
 - Datatilsynet om behandlingssikkerhed og risiko: https://www.datatilsynet.dk/regler-og-vejledning/grundlaeggende-begreber/hvordan-beskytter-du-personoplysninger
 - Datatilsynet om privacy by design: https://www.datatilsynet.dk/regler-og-vejledning/behandlingssikkerhed/databeskyttelse-gennem-design-og-standardindstillinger
