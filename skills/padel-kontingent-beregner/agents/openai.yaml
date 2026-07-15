@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bredballe IF Padel-kontingentberegner"
+  short_description: "Beregn sæsonvægtet BIF Padel-kontingent"
+  default_prompt: "Brug $padel-kontingent-beregner til at beregne det korrekte Bredballe IF Padel-kontingent for i dag."

@@ -24,6 +24,11 @@
       "name": "boerneattest",
       "source": "skills/boerneattest",
       "targets": [".github/skills", ".claude/skills"]
+    },
+    {
+      "name": "padel-kontingent-beregner",
+      "source": "skills/padel-kontingent-beregner",
+      "targets": [".github/skills", ".claude/skills"]
     }
   ]
 }
