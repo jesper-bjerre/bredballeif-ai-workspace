@@ -26,7 +26,7 @@ python -m agent budget-report
 ```
 
 - Brug afdelingens navn; `Padel` svarer til Conventus-valget `60: 116. Padel`.
-- Udelad `--department` kun ved en analyse af samtlige BIF-afdelinger.
+- Udelad `--department` kun ved en analyse af opsummering af samtlige BIF-afdelinger.
 - Hent som udgangspunkt de seneste tre regnskabsår. Brug `--years N`, hvis opgaven kræver en anden periode.
 - Bed om de manglende data, hvis Conventus-rapporten ikke indeholder både relevant budget og realiseret resultat.
 

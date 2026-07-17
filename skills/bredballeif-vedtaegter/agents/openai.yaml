@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bredballe IF vedtægter"
+  short_description: "Afklar ansvar og udfør vedtægtsopgaver"
+  default_prompt: "Brug $bredballeif-vedtaegter til at afklare ansvar og planlægge eller udføre en opgave efter Bredballe IFs vedtægter."

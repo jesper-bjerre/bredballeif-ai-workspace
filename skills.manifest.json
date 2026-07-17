@@ -6,6 +6,11 @@
       "targets": [".github/skills", ".claude/skills"]
     },
     {
+      "name": "bredballeif-vedtaegter",
+      "source": "skills/bredballeif-vedtaegter",
+      "targets": [".github/skills", ".claude/skills"]
+    },
+    {
       "name": "bredballeif-padel-baner",
       "source": "skills/bredballeif-padel-baner",
       "targets": [".github/skills", ".claude/skills"]
