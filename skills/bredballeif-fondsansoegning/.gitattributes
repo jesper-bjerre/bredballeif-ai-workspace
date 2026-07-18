@@ -1,0 +1,2 @@
+bin/*.sh text eol=lf
+assets/*.jsonl text eol=lf

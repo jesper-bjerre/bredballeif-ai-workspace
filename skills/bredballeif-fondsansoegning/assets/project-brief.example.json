@@ -1,0 +1,68 @@
+{
+  "project_id": "projekt-kort-navn-2026",
+  "ready_to_apply": false,
+  "title": "Kort og konkret projekttitel",
+  "organisation": {
+    "name": "Bredballe Idrætsforening",
+    "department": "",
+    "cvr": "",
+    "municipality": "Vejle Kommune",
+    "legal_form": "Folkeoplysende idrætsforening"
+  },
+  "need": "Hvilket dokumenteret problem eller behov løser projektet?",
+  "purpose": "Hvilken varig ændring skal projektet skabe?",
+  "target_groups": [
+    "Beskriv de konkrete deltagere og omtrentligt antal"
+  ],
+  "geography": [
+    "Bredballe",
+    "Vejle Kommune"
+  ],
+  "activities": [
+    "Beskriv aktivitet, ansvarlig og omfang"
+  ],
+  "themes": [
+    "idræt",
+    "frivillige fællesskaber"
+  ],
+  "eligible_expenses": [
+    "Beskriv de udgifter, der ønskes finansieret"
+  ],
+  "timeline": {
+    "start": "2027-01-01",
+    "end": "2027-12-31",
+    "milestones": []
+  },
+  "budget": {
+    "total_dkk": 0,
+    "requested_dkk": 0,
+    "own_financing_dkk": 0,
+    "other_confirmed_dkk": 0,
+    "other_pending_dkk": 0,
+    "items": []
+  },
+  "multi_funding_strategy": {
+    "mode": "",
+    "max_total_grants_dkk": 0,
+    "allocation_note": "",
+    "overaward_plan": ""
+  },
+  "outputs": [
+    "Hvad leveres og hvor mange?"
+  ],
+  "outcomes": [
+    "Hvilken målbar virkning forventes?"
+  ],
+  "measurement": "Hvordan og hvornår måles virkningen?",
+  "continued_operation": "Hvem driver og finansierer indsatsen efter støtteperioden?",
+  "volunteer_involvement": "Hvordan bidrager frivillige konkret?",
+  "sustainability": "Beskriv relevante sociale, miljømæssige og driftsmæssige hensyn.",
+  "owner_role": "Bestyrelse eller udpeget projektansvarlig",
+  "documentation_available": [],
+  "constraints": [],
+  "contact": {
+    "name": "",
+    "email": "",
+    "phone": ""
+  }
+}

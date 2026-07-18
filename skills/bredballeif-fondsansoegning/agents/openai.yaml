@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bredballe IF fondsansøgninger"
+  short_description: "Find fonde og lav målrettede ansøgninger"
+  default_prompt: "Brug $bredballeif-fondsansoegning til at finde de bedste aktuelle fonde til vores projekt og forberede individuelle ansøgninger."

@@ -1,6 +1,11 @@
 {
   "skills": [
     {
+      "name": "bredballeif-fondsansoegning",
+      "source": "skills/bredballeif-fondsansoegning",
+      "targets": [".github/skills", ".claude/skills"]
+    },
+    {
       "name": "bredballeif-oekonomi",
       "source": "skills/bredballeif-oekonomi",
       "targets": [".github/skills", ".claude/skills"]

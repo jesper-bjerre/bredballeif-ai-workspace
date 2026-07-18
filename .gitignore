@@ -3,6 +3,8 @@
 .github/skills/
 .claude/skills/
 data/
+# Privat research-seed med kontakt-/ansøgningsdata; må aldrig committes.
+docs/analyse/fonde/fonds_og_puljestyring_idraetsforening.xlsx
 __pycache__/
 *.pyc
 **/scripts/screenshots/
