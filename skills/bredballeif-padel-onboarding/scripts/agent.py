@@ -29,32 +29,41 @@ from pathlib import Path
 
 from halbooking_automation import HalBookingAutomation
 
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "scripts" / "gdpr_controls.py").exists():
+        sys.path.insert(0, str(_parent / "scripts"))
+        break
 
-def _redact_post_data(post_data: str) -> str:
-    """Redact credentials before printing captured AJAX request bodies."""
-    try:
-        pairs = urllib.parse.parse_qsl(post_data, keep_blank_values=True)
-    except Exception:
-        pairs = []
+from gdpr_controls import (  # noqa: E402
+    PolicyViolation,
+    audit_event,
+    emit_audit_event,
+    enforce_record_limit,
+    reject_broad_query,
+    require_write_approval,
+)
 
-    if not pairs:
-        return post_data
 
-    is_login = any(k == "funktion" and v == "login" for k, v in pairs)
-    redacted = []
-    for key, value in pairs:
-        key_l = key.lower()
-        if key_l in {"password", "passwd", "pwd"} or (is_login and key_l in {"value1", "value2"}):
-            redacted.append((key, "[REDACTED]"))
-        else:
-            redacted.append((key, value))
-    return urllib.parse.urlencode(redacted)
+def _safe_url_shape(raw_url: str) -> str:
+    """Return only origin and path; queries/fragments can contain identifiers or tokens."""
+    parsed = urllib.parse.urlsplit(raw_url)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _minimal_member_view(member: dict) -> dict:
+    """Keep only fields needed to identify the requested member."""
+    allowed_fragments = ("medlemsnr", "member_id", "member id", "navn", "name")
+    return {
+        str(key): value
+        for key, value in member.items()
+        if any(fragment in str(key).strip().lower() for fragment in allowed_fragments)
+    }
 
 
 def print_page_info(info: dict, indent: int = 0) -> None:
     pad = "  " * indent
-    print(f"{pad}URL:   {info.get('url', '?')}")
-    print(f"{pad}Title: {info.get('title', '?')}")
+    print(f"{pad}URL:   {_safe_url_shape(info.get('url', '')) or '?'}")
+    print(f"{pad}Title: [OMITTED]")
 
     forms = info.get("forms", [])
     if forms:
@@ -64,14 +73,9 @@ def print_page_info(info: dict, indent: int = 0) -> None:
                 if f["type"] == "hidden":
                     continue
                 req = " *REQUIRED*" if f.get("required") else ""
-                opts = ""
-                if f.get("options"):
-                    opts = f"  options: {f['options'][:8]}"
-                    if len(f["options"]) > 8:
-                        opts += f" … (+{len(f['options'])-8} more)"
-                val = f"  [current: {f['value']}]" if f.get("value") else ""
+                opts = f"  options: {len(f['options'])}" if f.get("options") else ""
                 print(f"{pad}  • {f['name'] or f['id'] or '(unnamed)'}"
-                      f"  ({f['type']}){req}{val}{opts}")
+                      f"  ({f['type']}){req}{opts}")
     else:
         print(f"{pad}  (no form fields found)")
 
@@ -79,8 +83,7 @@ def print_page_info(info: dict, indent: int = 0) -> None:
     if buttons:
         print(f"\n{pad}Buttons:")
         for b in buttons:
-            print(f"{pad}  [{b.get('type','?')}] {b.get('text','')}"
-                  f"  id={b.get('id','')}")
+            print(f"{pad}  [{b.get('type','?')}] id={b.get('id','')}")
 
     links = info.get("links", [])
     relevant = [l for l in links if any(k in (l.get("href","") + l.get("text","")).lower()
@@ -88,7 +91,7 @@ def print_page_info(info: dict, indent: int = 0) -> None:
     if relevant:
         print(f"\n{pad}Relevant links:")
         for l in relevant[:20]:
-            print(f"{pad}  {l['text'][:50]:50s}  -> {l['href']}")
+            print(f"{pad}  {_safe_url_shape(l['href'])}")
 
 
 def cmd_discover(bot: HalBookingAutomation) -> None:
@@ -132,14 +135,11 @@ def cmd_discover(bot: HalBookingAutomation) -> None:
         if ajax_log:
             print(f"\n--- Captured {len(ajax_log)} AJAX requests ---")
             for req in ajax_log:
-                print(f"  {req['method']} {req['url']}")
+                print(f"  {req['method']} {_safe_url_shape(req['url'])}")
                 if req.get("post_data"):
-                    print(f"       body: {_redact_post_data(req['post_data'])[:200]}")
+                    print("       body: [OMITTED]")
 
-        # Dump raw HTML for offline analysis
-        html_path = Path("screenshots") / "page_source.html"
-        html_path.write_text(bot.get_page_html(), encoding="utf-8")
-        print(f"\nFull page HTML saved to {html_path}")
+        print("\nRaw page HTML is deliberately not persisted.")
 
     finally:
         bot.stop()
@@ -149,6 +149,7 @@ def cmd_discover(bot: HalBookingAutomation) -> None:
 
 def cmd_search(bot: HalBookingAutomation, search_name: str, show_detail: bool = False) -> None:
     """Log in and search for a member by name."""
+    search_name = reject_broad_query(search_name)
     print(f"=== Searching for '{search_name}' ===\n")
     bot.start()
     try:
@@ -167,24 +168,22 @@ def cmd_search(bot: HalBookingAutomation, search_name: str, show_detail: bool = 
         print(f"  Search term: {result.get('search_term', search_name)}")
         print(f"  Success:     {result.get('success')}")
 
-        members = result.get("members", [])
+        members = enforce_record_limit(result.get("members", []), limit=10)
         if members:
             print(f"  Found:       {len(members)} member(s)\n")
             for i, m in enumerate(members):
-                print(f"  [{i}] ", end="")
-                if "raw_text" in m:
-                    print(m["raw_text"][:200])
-                else:
-                    parts = [f"{k}: {v}" for k, v in m.items() if v]
-                    print(" | ".join(parts))
+                view = _minimal_member_view(m)
+                parts = [f"{k}: {v}" for k, v in view.items() if v]
+                print(f"  [{i}] " + (" | ".join(parts) if parts else "[fields omitted]"))
         else:
             print("  Found:       0 members")
 
         detail = result.get("member_detail")
         if detail:
-            print(f"\n--- Member Detail ({len(detail)} fields) ---")
-            max_key_len = max((len(k) for k in detail), default=0)
-            for k, v in detail.items():
+            view = _minimal_member_view(detail)
+            print(f"\n--- Minimized Member Detail ({len(view)} fields) ---")
+            max_key_len = max((len(k) for k in view), default=0)
+            for k, v in view.items():
                 print(f"  {k:{max_key_len}s}  {v}")
 
         active_ms = result.get("active_memberships", [])
@@ -199,14 +198,14 @@ def cmd_search(bot: HalBookingAutomation, search_name: str, show_detail: bool = 
             print("  (ingen fundet)")
 
         if result.get("note"):
-            print(f"\n  Note: {result['note']}")
+            print("\n  Note: [OMITTED]")
 
         if ajax_log:
             print(f"\n--- AJAX activity ({len(ajax_log)} requests) ---")
             for req in ajax_log:
-                print(f"  {req['method']} {req['url']}")
+                print(f"  {req['method']} {_safe_url_shape(req['url'])}")
                 if req.get("post_data"):
-                    print(f"       body: {_redact_post_data(req['post_data'])[:300]}")
+                    print("       body: [OMITTED]")
 
     finally:
         bot.stop()
@@ -230,16 +229,16 @@ def cmd_create(bot: HalBookingAutomation, member_data: dict[str, str]) -> None:
         print("\n--- Result ---")
         print(f"  Success:   {result.get('success')}")
         print(f"  Submitted: {result.get('submitted')}")
-        print(f"  Final URL: {result.get('final_url')}")
+        print(f"  Final URL: {_safe_url_shape(result.get('final_url', ''))}")
         if result.get("note"):
-            print(f"  Note:      {result['note']}")
+            print("  Note:      [OMITTED]")
 
         if ajax_log:
             print(f"\n--- AJAX activity ({len(ajax_log)} requests) ---")
             for req in ajax_log:
-                print(f"  {req['method']} {req['url']}")
+                print(f"  {req['method']} {_safe_url_shape(req['url'])}")
                 if req.get("post_data"):
-                    print(f"       body: {_redact_post_data(req['post_data'])[:300]}")
+                    print("       body: [OMITTED]")
 
     finally:
         bot.stop()
@@ -353,7 +352,7 @@ def _send_welcome_email_if_needed(
     body = WELCOME_EMAIL_TEMPLATE.format(navn=navn, login_linje=login_linje)
 
     print(f"\n--- Sender velkomst-email via HalBooking ---")
-    print(f"  Til:    {email}")
+    print("  Til:    [OMITTED]")
     print(f"  Emne:   {WELCOME_EMAIL_SUBJECT}")
 
     email_result: dict = {"success": False, "steps_completed": []}
@@ -362,23 +361,15 @@ def _send_welcome_email_if_needed(
     if email_result.get("success"):
         print(f"  [+] Velkomst-email sendt!")
     else:
-        print(f"  [!] Fejl ved afsendelse: {email_result.get('error', 'ukendt')}")
-        # Fallback: print the email so it can be sent manually
-        print(f"\n{'='*60}")
-        print("VELKOMST E-MAIL (ikke sendt — send manuelt)")
-        print(f"{'='*60}")
-        print(f"Til:     {email}")
-        print(f"Emne:    {WELCOME_EMAIL_SUBJECT}")
-        print(f"{'─'*60}")
-        print(body)
-        print(f"{'='*60}")
+        print("  [!] Velkomst-email kunne ikke sendes; indhold/modtager skrives ikke til tool-output.")
 
 
 def cmd_onboard(bot: HalBookingAutomation, name: str, membership_type: str,
                 end_date: str, start_date: str | None = None,
                 conventus_data: dict | None = None) -> None:
     """Full SOP onboarding: Conventus lookup → HalBooking create → welcome email."""
-    print(f"=== Onboarding '{name}' ===\n")
+    name = reject_broad_query(name)
+    print("=== Onboarding ===\n")
 
     # Step 1: Fetch member info from Conventus. HARD requirement — vi opretter
     # IKKE i HalBooking medmindre personen er verificeret i en betalende
@@ -397,29 +388,25 @@ def cmd_onboard(bot: HalBookingAutomation, name: str, membership_type: str,
             members = fetch_members(resolve_groups("all"))
             print(f"  [trace] Conventus svarede: {len(members)} medlemmer hentet.", flush=True)
         except Exception as e:
-            print(f"  [!] Conventus API fejl: {e}")
-            print(f"  [!] AFBRYDER — kan ikke verificere betalt kontingent eller frivilligstatus for '{name}'.")
+            print(f"  [!] Conventus API fejl: {type(e).__name__}")
+            print("  [!] AFBRYDER — kan ikke verificere betalt kontingent eller frivilligstatus.")
             print(f"  [!] Medlem oprettes IKKE i HalBooking.")
             return
 
         matches = [m for m in members if name.lower() in " ".join(m["navn"].lower().split())]
         if not matches:
-            print(f"  [!] '{name}' ikke fundet i Conventus' aktive 2026- eller frivilliggruppe.")
+            print("  [!] Medlemmet blev ikke fundet i den tilladte Conventus-scope.")
             print(f"  [!] AFBRYDER — personen har hverken verificeret betaling eller frivilligstatus.")
             print(f"  [!] Medlem oprettes IKKE i HalBooking.")
             return
 
-        conventus_data = matches[0]
         if len(matches) > 1:
-            print(f"  [!] Fandt {len(matches)} navne-matches — bruger første:")
+            print(f"  [!] Fandt {len(matches)} navne-matches — afbryder; kræver entydigt medlems-id.")
+            return
+        conventus_data = matches[0]
         is_volunteer = PADEL_VOLUNTEERS_GROUP_ID in conventus_data.get("grupper_ids", [])
         verification = "frivillig — kontingentbetaling kræves ikke" if is_volunteer else "betalt kontingent"
-        print(f"  [+] Verificeret i Conventus ({verification}):")
-        print(f"      Conventus ID: {conventus_data['id']}")
-        print(f"      Navn:         {conventus_data['navn']}")
-        print(f"      Mobil:        {conventus_data['mobil']}")
-        print(f"      Email:        {conventus_data['email']}")
-        print(f"      Grupper:      {', '.join(conventus_data.get('grupper', []))}")
+        print(f"  [+] Verificeret i Conventus ({verification}); kontaktfelter er udeladt.")
         print()
 
     # Step 2: Search HalBooking to see if member already exists
@@ -451,7 +438,7 @@ def cmd_onboard(bot: HalBookingAutomation, name: str, membership_type: str,
         if search_result.get("members"):
             print(f"  Medlem allerede fundet i HalBooking:")
             for m in search_result["members"]:
-                parts = [f"{k}: {v}" for k, v in m.items() if v]
+                parts = [f"{k}: {v}" for k, v in _minimal_member_view(m).items() if v]
                 print(f"      {' | '.join(parts)}")
             print()
 
@@ -469,11 +456,9 @@ def cmd_onboard(bot: HalBookingAutomation, name: str, membership_type: str,
             print(f"  Medlemsnr:        {result.get('medlemsnr', '?')}")
             print(f"  Steps completed:  {', '.join(result.get('steps_completed', []))}")
             if result.get("warnings"):
-                print(f"\n  Advarsler:")
-                for w in result["warnings"]:
-                    print(f"    - {w}")
+                print(f"\n  Advarsler:        {len(result['warnings'])} (indhold udeladt)")
             if result.get("error"):
-                print(f"\n  [!] Fejl: {result['error']}")
+                print("\n  [!] Fejl: detalje udeladt fra tool-output")
 
             # Always send a welcome email when a membership was assigned to an
             # existing member (skips automatically if one was already sent).
@@ -502,16 +487,14 @@ def cmd_onboard(bot: HalBookingAutomation, name: str, membership_type: str,
         print(f"\n--- Resultat ---")
         print(f"  Success:          {result.get('success')}")
         print(f"  Medlemsnr:        {result.get('medlemsnr', '?')}")
-        print(f"  Adgangskode:      {result.get('password', '?')}")
+        print("  Adgangskode:      [REDACTED — leveres kun via den sikre velkomstmail]")
         print(f"  Steps completed:  {', '.join(result.get('steps_completed', []))}")
 
         if result.get("warnings"):
-            print(f"\n  Advarsler:")
-            for w in result["warnings"]:
-                print(f"    - {w}")
+            print(f"\n  Advarsler:        {len(result['warnings'])} (indhold udeladt)")
 
         if result.get("error"):
-            print(f"\n  [!] Fejl: {result['error']}")
+            print("\n  [!] Fejl: detalje udeladt fra tool-output")
 
         # Step 4: Send welcome email via HalBooking (always for new members)
         medlemsnr = result.get("medlemsnr", "")
@@ -537,7 +520,8 @@ def cmd_welcome_email(bot: HalBookingAutomation, search_name: str) -> None:
     Looks up the member, retrieves their medlemsnr, formats the SOP welcome
     email template, and sends it through HalBooking's built-in email feature.
     """
-    print(f"=== Gensender velkomst-email til '{search_name}' ===\n")
+    search_name = reject_broad_query(search_name)
+    print("=== Gensender velkomst-email ===\n")
     bot.start()
     try:
         if not bot.login():
@@ -559,9 +543,8 @@ def cmd_welcome_email(bot: HalBookingAutomation, search_name: str) -> None:
             print("  [!] Kunne ikke finde medlemsnr. Afbryder.")
             return
 
-        print(f"  Navn:       {navn}")
         print(f"  Medlemsnr:  {medlemsnr}")
-        print(f"  Email:      {email}")
+        print("  Modtager:   [OMITTED]")
 
         # Format the welcome email (existing members: no password)
         subject = "Velkommen som medlem af Bredballe IF Padel"
@@ -581,7 +564,7 @@ def cmd_welcome_email(bot: HalBookingAutomation, search_name: str) -> None:
         print(f"  Steps completed:  {', '.join(result.get('steps_completed', []))}")
 
         if result.get("error"):
-            print(f"\n  [!] Fejl: {result['error']}")
+            print("\n  [!] Fejl: detalje udeladt fra tool-output")
 
         # Logout
         print("\n--- Logger af ---")
@@ -599,6 +582,7 @@ def cmd_history(bot: HalBookingAutomation, search_name: str) -> None:
     Uses the 'Klippekort/Medlemskaber' page on admin_konto.asp.
     The 'Restklip/udløb' column is the canonical source for the expiry year.
     """
+    search_name = reject_broad_query(search_name)
     print(f"=== Medlemskabshistorik for '{search_name}' ===\n")
     bot.start()
     try:
@@ -684,8 +668,7 @@ def cmd_availability(
             for s in court["slots"]:
                 mark = "LEDIG " if s["status"] == "free" else "OPTAGET"
                 end = f"–{s['end']}" if s["end"] else ""
-                label = f"  {s['label']}" if s["label"] else ""
-                print(f"    [{mark}] {s['time']}{end}{label}")
+                print(f"    [{mark}] {s['time']}{end}")
             print()
 
     finally:
@@ -725,9 +708,9 @@ def cmd_book_court(
         print(f"  Bane:    {court}")
         print(f"  Tid:     {start_time} - {result.get('end_time', '?')}")
         if text:
-            print(f"  Tekst:   {text}")
+            print("  Tekst:   [OMITTED]")
         if result.get("note"):
-            print(f"  Note:    {result['note']}")
+            print("  Note:    [OMITTED]")
 
     finally:
         bot.stop()
@@ -744,7 +727,9 @@ def cmd_export(bot: HalBookingAutomation, out_file: str | None = None) -> None:
     3. Click 'Alle medlemmer' button (SearchLetter '8') to show all — not just one letter
     4. Paginate through all result pages
     """
-    print("=== HalBooking: Eksporterer alle Padel-medlemmer ===")
+    if not out_file:
+        raise SystemExit("Masseeksport må kun skrives til en eksplicit privat fil; stdout er blokeret.")
+    print("=== HalBooking: Eksporterer alle Padel-medlemmer til privat fil ===")
     bot.start()
     all_members: dict[str, dict] = {}
     try:
@@ -811,11 +796,8 @@ def cmd_export(bot: HalBookingAutomation, out_file: str | None = None) -> None:
 
     members_list = list(all_members.values())
     output = json.dumps(members_list, ensure_ascii=False, indent=2)
-    if out_file:
-        Path(out_file).write_text(output, encoding="utf-8")
-        print(f"  Gemt til: {out_file}")
-    else:
-        print(output)
+    Path(out_file).write_text(output, encoding="utf-8")
+    print("  Eksport gemt i den eksplicit angivne private fil.")
 
 
 def cmd_preflight(bot: HalBookingAutomation, member_name: str | None = None) -> int:
@@ -877,7 +859,7 @@ def cmd_preflight(bot: HalBookingAutomation, member_name: str | None = None) -> 
             f"{len(conventus_members)} medlemmer hentet på {elapsed:.1f}s",
         )
     except Exception as e:
-        record("Conventus API svarer", False, f"{type(e).__name__}: {e}")
+        record("Conventus API svarer", False, type(e).__name__)
 
     # --- 3. Optional: specific member present in Conventus ----------------
     if member_name:
@@ -915,12 +897,12 @@ def cmd_preflight(bot: HalBookingAutomation, member_name: str | None = None) -> 
                     bot.navigate_to_find_user()
                     record("HalBooking admin-side tilgængelig", True, "admin_findbruger.asp loadede")
                 except Exception as e:
-                    record("HalBooking admin-side tilgængelig", False, f"{type(e).__name__}: {e}")
+                    record("HalBooking admin-side tilgængelig", False, type(e).__name__)
                 bot.logout()
         finally:
             bot.stop()
     except Exception as e:
-        record("HalBooking login", False, f"{type(e).__name__}: {e}")
+        record("HalBooking login", False, type(e).__name__)
 
     # --- 5. Gmail (OAuth) connection --------------------------------------
     print("\n--- 5. Gmail forbindelse ---", flush=True)
@@ -934,7 +916,7 @@ def cmd_preflight(bot: HalBookingAutomation, member_name: str | None = None) -> 
             f"forbundet som {profile.get('emailAddress', '?')}",
         )
     except Exception as e:
-        record("Gmail OAuth + API", False, f"{type(e).__name__}: {e}")
+        record("Gmail OAuth + API", False, type(e).__name__)
 
     # --- Summary ----------------------------------------------------------
     failed = [label for label, ok, _ in results if not ok]
@@ -997,6 +979,34 @@ def main() -> None:
     parser.add_argument("--test-hold", type=str, default=None,
                         help="(process-emails only) Test mode: Conventus hold-navn, fx 'Padel: Jan-Juni 2026 (non-prime)'.")
     args = parser.parse_args()
+
+    approval_actions = {
+        "discover": "halbooking.diagnostic-export",
+        "create": "halbooking.member.create",
+        "onboard": "onboarding.onboard",
+        "export": "halbooking.bulk-read",
+        "welcome-email": "halbooking.email.send",
+        "process-emails": "onboarding.process-emails",
+        "book-court": "halbooking.court.book",
+    }
+    approval = None
+    if args.action in approval_actions:
+        try:
+            approval = require_write_approval(approval_actions[args.action])
+            if args.action == "process-emails":
+                approval.require("onboarding.onboard")
+        except PolicyViolation as exc:
+            parser.error(str(exc))
+        emit_audit_event(audit_event(
+            approval_actions[args.action], "approved", record_count=1,
+            actor_role=approval.actor_role, correlation_id=approval.correlation_id,
+        ))
+
+    if args.name:
+        try:
+            args.name = reject_broad_query(args.name)
+        except PolicyViolation as exc:
+            parser.error(str(exc))
 
     bot = HalBookingAutomation(headless=not args.visible)
 

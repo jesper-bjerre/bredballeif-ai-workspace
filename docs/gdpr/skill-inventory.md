@@ -1,0 +1,53 @@
+# Skill-inventar
+
+Inventaret er afstemt mod `skills.manifest.json` 19. juli 2026. "Provider" betyder LLM-provider;
+ingen skillkode kalder selv en LLM. Derfor er provider/fallback runtime-managed og uverificeret.
+
+| Skill | Placering | Formål / brugergruppe | Dataklasse | Persondata | Følsomme data | Systemer | Tools | Read/write/send/mass | Provider | Fallback | Max records | Approval | Logging/persistens | Risiko | Status | Anbefaling |
+|---|---|---|---|---|---|---|---|---|---|---|---:|---|---|---|:---:|---|
+| `bredballeif-boerneattest` | `skills/bredballeif-boerneattest` | Attestkontrol; bestyrelse/afdelinger | PERSONAL, SENSITIVE | Navn, id, fødselsdato, roller | Atteststatus; CPR nævnes kun i sikker skabelon | Conventus | `list`, `welcome-email`, `annual-report`, `afdelinger`, `grupper`, `afdeling-attest`, `u15-trainers` | Read, mailudkast og masse-/årsrapport; ingen send | LOCAL for status | Ingen ekstern | 10 | Sensitive-read og bulk særskilt | Redigeret stdout + metadataaudit; retention ukendt | Kritisk | RØD/GUL | Bevis local-only/no-session og gennemfør DPIA-/hjemmelsvurdering |
+| `bredballeif-fondsansoegning` | `skills/bredballeif-fondsansoegning` | Fondsresearch/-ansøgning; udvalg/bestyrelse | PUBLIC, INTERNAL, mulig PERSONAL | Projektkontakt og ansøgningshistorik/noter | Ingen tiltænkt | Web, EU API, DGI XLSX, Fundraising Club, OneDrive/SharePoint, JSON-store | Research, import, match, batch, approve/register | Net-read; lokal write; maks. 10 modelvendte poster/pakker; ingen ekstern submit | Runtime ukendt; EU ved PERSONAL | Ikke-EU kun PUBLIC; ikke konfigureret | 10 + pagination | Hash-/`confirm-*`-approval | Privat gitignored store/runlog; retention ukendt | Høj | GUL | Providerlock, slettefrist og minimering af kontakt/noter |
+| `bredballeif-oekonomi` | `skills/bredballeif-oekonomi` | Budget/opfølgning; udvalg/bestyrelse | INTERNAL; mulig PERSONAL | Mulige navne/identifikatorer i posteringstekst | Ingen tiltænkt | Conventus via padel-skill | `budget-report` | Read-only; præcis afdeling og højst 3 år | Runtime ukendt; EU-default | Ukendt | 10 i policy; rapportår maks. 3 | Ingen write | Stdout; ingen egen filpersistens | Middel-høj | GUL | Scrub identifikatorer før model og håndhæv afdelingsscope i gateway |
+| `bredballeif-padel-baner` | `skills/bredballeif-padel-baner` | Ledighed/booking; Padel-udvalg | INTERNAL, SECRET | Bookingtekst kan indeholde navn | Dør-/adgangskode behandles som SECRET | HalBooking/Playwright | `availability`, `book-court` via admin-wrapper | Read; booking-write op til 3 baner | LOCAL ved SECRET | Ingen | 10 policy; booking maks. 3 | `halbooking.court.book` | Adgangskode fjernet; screenshots default off | Høj | GUL | Sikker kodekanal og TTL/private path ved diagnostic opt-in |
+| `bredballeif-padel-conventus` | `skills/bredballeif-padel-conventus` | Medlemsopslag/statistik/økonomi/grupper; Padel-admin | PERSONAL, INTERNAL | Fulde medlemsobjekter, grupper, kontaktdata | Ingen tiltænkt | Conventus XML + Playwright | `search`, `list`, `stats`, `compare`, `budget-report`, `create-*` | Read/mass; gruppe-write/publicering; separate wrappers | Runtime ukendt; EU ved PERSONAL | Ikke-EU forbudt; runtime ukendt | 10 search/list; større limit kræver bulk | Bulk-read og `conventus.create-group` | Minimeret search-output + metadataaudit; screenshots | Kritisk | RØD/GUL | Gatewayprojection, eksakt formål og verificér runtime-whitelist/servicekonti |
+| `bredballeif-padel-halbooking` | `skills/bredballeif-padel-halbooking` | Medlemsadmin; Padel-udvalg | PERSONAL, SECRET | Navn, e-mail, telefon, fødselsdato, medlemskab/mail | Password, OAuth/session | HalBooking, Conventus, Gmail | `discover`, `search`, `create`, `onboard`, `export`, `history`, `welcome-email`, `process-emails`, `preflight`, `availability`, `book-court` | Read/write/send/export/batch | Runtime ukendt; EU ved PERSONAL, LOCAL ved SECRET | Ikke-EU forbudt; runtime ukendt | 10 mail/search-policy | Alle writes/bulk/diagnostic scoped | Password/raw body/HTML fjernet; fil/screenshot/sessionretention ukendt | Kritisk | RØD/GUL | Gatewayapproval, eksakt member-id, sikker outputroot, RBAC/providerlock |
+| `bredballeif-padel-kontingent-beregner` | `skills/bredballeif-padel-kontingent-beregner` | Kontingentberegning; Padel-udvalg | PUBLIC, INTERNAL | Ingen tiltænkt | Ingen | Lokal Python | `beregn` | Lokal read/compute; ingen write | LLM unødvendig | Ikke relevant | 10 policy; inputliste ikke begrænset | Ikke krævet | Stdout JSON; ingen persistens | Lav | GRØN/GUL | Hold medlemsdata ude af input og brug lokal behandling |
+| `bredballeif-padel-onboarding` | `skills/bredballeif-padel-onboarding` | Tværsystem-onboarding; Padel-admin | PERSONAL, SECRET | Navn, id, mobil, e-mail, medlemskab/mail | Password, OAuth/session | Conventus, HalBooking, Gmail | Samme CLI-toolset som HalBooking | Opret/tildel/send/label/mark read; batch | Runtime ukendt; EU ved PERSONAL, LOCAL ved SECRET | Ikke-EU forbudt; runtime ukendt | 10 Gmail/search-policy | Alle writes/bulk scoped | Rå subprocess/body/HTML fjernet; audit; sessionretention ukendt | Kritisk | RØD/GUL | Approval-controller, eksakt member-id, DPA/RBAC og retention |
+| `bredballeif-vedtaegter` | `skills/bredballeif-vedtaegter` | Fortolkning/udkast; hele BIF | PUBLIC, INTERNAL; PERSONAL ved konkret sag | Navn/korrespondance hvis bruger indsætter det | Mulig fri tekst; ikke tiltænkt | Lokale references, offentlig BIF-web, delegation | Dokumentopslag og udkast | Read/udkast; anden skill står for ekstern write | Runtime ukendt; EU ved PERSONAL | Ikke-EU kun rent PUBLIC | Ikke relevant | Write via anden integration kræver approval | Model/session ukendt; ingen kodepersistens | Middel | GUL | Skil konkrete sager fra public spørgsmål; klassificér før delegation |
+
+## Komplet CLI-/tool-action-inventar
+
+| Skill | Eksakte actions | Effekt |
+|---|---|---|
+| `bredballeif-boerneattest` | `list`, `welcome-email`, `annual-report`, `afdelinger`, `grupper`, `afdeling-attest`, `u15-trainers` | Conventus read; lokalt mailudkast; status/bulk er SENSITIVE-gated; ingen ekstern send/write |
+| `bredballeif-fondsansoegning` | `initialiser`, `status`, `genopbyg-indeks`, `daekning`, `liste`, `importer-regneark`, `synkroniser-dgi`, `importer-historik`, `historik`, `opdater-resultat`, `synkroniser-statens-puljer`, `synkroniser-eu`, `synkroniser-kilder`, `synkroniser-fundraisingclub`, `opret-projekt`, `valider-projekt`, `match`, `opdater-fond`, `forbered-batch`, `valider-batch`, `godkend`, `registrer-indsendelse` | Offentlig/licenseret net-read; privat lokal fil-write; ingen portal/mail-submit; approval-/submissionregistrering er lokal og hashbundet |
+| `bredballeif-oekonomi` | Ingen egen CLI; delegerer til Conventus `budget-report` | Read/analyse/udkast |
+| `bredballeif-padel-baner` | `availability`, `book-court` | HalBooking read; booking-write via admin-wrapper + approval |
+| `bredballeif-padel-conventus` | `search`, `list`, `stats`, `compare`, `budget-report`, `create-americano`, `create-mexicano`, `create-group` | Conventus read/aggregation; tre gruppe-write-actions via admin-wrapper + approval |
+| `bredballeif-padel-halbooking` | `discover`, `search`, `create`, `onboard`, `export`, `history`, `welcome-email`, `process-emails`, `preflight`, `availability`, `book-court` | HalBooking/Conventus/Gmail read, diagnostic, bulk-export, create/update/send/modify og booking; risikofyldte actions er admin-wrapper-/approval-gated |
+| `bredballeif-padel-kontingent-beregner` | `beregn` | Lokal deterministisk beregning og JSON-output; ingen ekstern write |
+| `bredballeif-padel-onboarding` | Samme 11 actions som HalBooking-skillen | Tværsystem-read/write/send; `process-emails` kræver både batch- og nested-onboard-approval |
+| `bredballeif-vedtaegter` | Ingen eksekverbar CLI | Lokalt dokumentopslag, fortolkning og udkast; ekstern handling delegeres |
+
+Fire `agents/openai.yaml`-filer (fonde, økonomi, kontingentberegner og vedtægter) er UI-metadata og
+introducerer ingen ekstra runtime-tools. De to OpenClaw-agenter er kun dokumenteret i
+`docs/openclaw-setup.md`; deres faktiske toolregistrering skal verificeres i deploymentet.
+
+## Toolkontrakter og mangler
+
+| Toolgruppe | Inputallowlist | Outputallowlist | Autorisation | Audit | Mangler |
+|---|---|---|---|---|---|
+| Conventus `search` | navn ≥3 tegn, kendt gruppe, limit 1–10 | id, navn, grupper | Padel-admin, afdelingsscope | lookup/status/count | API parser stadig alle felter; gateway bør returnere formålsfelter og helst bruge eksakt id |
+| Conventus `list` | kendt gruppe, limit; bulk flag + ekstern approval | max godkendt antal | Særskilt bulk-role | group/count | Rå API henter hele gruppen før lokal grænse |
+| Conventus `stats` | kendte år/grupper | aggregater | Padel-admin | query/count | Gruppe-ID'er er hardcodede og årsafgrænsning kræver vedligehold |
+| Conventus gruppeoprettelse | titel, dato, afdeling, aktivitet, max, beskrivelse, pris | success, group id, ikke credentials | `conventus.create-group` approval | `conventus.group.create` | Wrapper bør opdeles read/write; server-side idempotency/rollback ukendt |
+| HalBooking medlemssøgning | navn ≥3 tegn | formålsspecifikke felter | Padel-admin | lookup/count | Browserresultat kan indeholde raw text; gateway-minimering mangler |
+| HalBooking create/onboard | verificeret Conventus-match, medlemskabstype, dato | status/medlemsnr; password ikke stdout | scoped 15-min approval | action/status/count/correlation | Eksakt match/member-id bør erstatte første substringmatch |
+| HalBooking export/compare | eksplicit privat fil og bulk approval | lokal fil; intet stdout | særskilt bulk-role | export/count | Kryptering, tilladt outputroot og auto-sletning mangler |
+| Gmail process | fast query, max 10 | statusantal; rå body ikke log | process-emails + onboard approvals | batch/status/count | Forkert modtager, retention og mail-providerregion skal verificeres |
+| Børneattest read | afdeling/gruppe, max 10 | navn + nødvendig atteststatus; ingen kontaktfelter | sensitive-read; bulk separat | action/count | End-to-end lokal-only enforcement og DPIA-vurdering mangler |
+| Fondsbatch | 1–10 fund-id'er, privat projekt | separate pakker + hashes | konkret approval før ekstern manuel submission | lokal historik | Lokal kryptering/sletning og provider-policy for kontaktdata mangler |
+
+Der findes ingen generisk `call_api(method,url,headers,body)`-wrapper. Standard- og admin-wrapperne har
+nu separate action-allowlists. Risikoen er fortsat brede domænekommandoer (`list all`, `export`,
+`discover`) og manglende deployment-evidens for whitelist, approval-controller og servicekonti.

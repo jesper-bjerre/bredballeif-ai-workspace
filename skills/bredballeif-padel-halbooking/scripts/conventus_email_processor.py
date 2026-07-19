@@ -6,7 +6,7 @@ This module is invoked by:
     same CLI command — single source of truth)
 
 Workflow per run:
-1. Connect to Gmail (bredballeifpadel@gmail.com) via OAuth refresh token.
+1. Connect to the configured Gmail mailbox via OAuth refresh token.
 2. Search for unread emails from kan-ikke-besvares-2296@conventus.dk
    with subject starting with "Notifikation - Tilmelding til".
 3. For each email: parse "Hold:" and "Medlem:" lines, map the hold name to
@@ -39,6 +39,13 @@ from email.message import EmailMessage
 from email.utils import formatdate
 from pathlib import Path
 from typing import Iterable
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "scripts" / "gdpr_controls.py").exists():
+        sys.path.insert(0, str(_parent / "scripts"))
+        break
+
+from gdpr_controls import PolicyViolation, require_write_approval  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HALBOOKING_AGENT_DIR = Path(__file__).resolve().parent
@@ -113,14 +120,18 @@ def _get_or_create_label(service, name: str) -> str:
     return created["id"]
 
 
-def _list_matching_messages(service) -> list[dict]:
+def _list_matching_messages(service, max_messages: int = 10) -> list[dict]:
+    if max_messages < 1 or max_messages > 10:
+        raise ValueError("max_messages skal være mellem 1 og 10")
     messages: list[dict] = []
     page_token: str | None = None
     while True:
         resp = service.users().messages().list(
-            userId="me", q=GMAIL_QUERY, pageToken=page_token, maxResults=100
+            userId="me", q=GMAIL_QUERY, pageToken=page_token, maxResults=max_messages - len(messages)
         ).execute()
         messages.extend(resp.get("messages", []))
+        if len(messages) >= max_messages:
+            break
         page_token = resp.get("nextPageToken")
         if not page_token:
             break
@@ -286,13 +297,8 @@ def _run_onboard(name: str, type_flag: str, end_date: str, start_date: str | Non
     pythonpath_parts = [str(HALBOOKING_AGENT_DIR), env.get("PYTHONPATH", "")]
     env["PYTHONPATH"] = os.pathsep.join(p for p in pythonpath_parts if p)
 
-    # Trace: echo the exact command + environment so a failed run can be
-    # reproduced locally from the workflow log alone.
-    printable_cmd = " ".join(
-        f'"{c}"' if " " in c else c for c in cmd[2:]  # skip python -m noise
-    )
-    print(f"    [trace] onboard cmd: python -m {printable_cmd}")
-    print(f"    [trace] cwd={REPO_ROOT}  PYTHONPATH={env['PYTHONPATH']}")
+    # Log kun handlingsmetadata. Navn, paths og miljø må ikke ende i CI-/driftslogs.
+    print("    [trace] onboard action=onboarding.onboard")
     print(f"    [trace] timeout={ONBOARD_TIMEOUT_SECONDS}s  starting subprocess…", flush=True)
 
     t0 = time.monotonic()
@@ -355,13 +361,7 @@ def _build_summary(results: list[ProcessedEmail]) -> tuple[str, str]:
                 f"Medlem:    {r.medlem or '(ikke parset)'}" + (f"  (Id: {r.medlem_id})" if r.medlem_id else ""),
                 f"Fejl:      {r.error}",
             ]
-            if r.onboard_stdout:
-                tail = r.onboard_stdout.strip().splitlines()[-20:]
-                lines.append("Onboard stdout (sidste 20 linjer):")
-                lines += [f"  {l}" for l in tail]
-            if r.onboard_stderr:
-                lines.append("Onboard stderr:")
-                lines += [f"  {l}" for l in r.onboard_stderr.strip().splitlines()[-10:]]
+            lines.append("Detaljer: Se det redigerede audit-event via correlation ID; rå subprocess-output gemmes ikke.")
 
     if ok:
         lines += ["", "=" * 70, "OK", "=" * 70]
@@ -387,6 +387,12 @@ def process_test(name: str, hold: str) -> int:
 
     Returns 0 on success, 1 on onboard failure, 2 on config error.
     """
+    try:
+        approval = require_write_approval("onboarding.process-emails")
+        approval.require("onboarding.onboard")
+    except PolicyViolation as exc:
+        print(f"ERROR: {exc}")
+        return 2
     admin_to = os.environ.get("ADMIN_EMAIL_TO", "").strip()
     if not admin_to:
         print("ERROR: ADMIN_EMAIL_TO not set.")
@@ -394,7 +400,7 @@ def process_test(name: str, hold: str) -> int:
 
     fake_body = f"Hold:{hold} (Id: 0)Medlem:{name} (Id: 0)"
     print(f"[*] TEST MODE")
-    print(f"    Synthesized body: {fake_body!r}")
+    print("    Syntetisk body oprettet (indhold redigeret fra log)")
 
     record = ProcessedEmail(
         message_id="(test)",
@@ -424,7 +430,7 @@ def process_test(name: str, hold: str) -> int:
             print(f"    Mapping:  --type {type_flag} --end-date {end_date}"
                   + (f" --start-date {start_date}" if start_date else ""))
         except ValueError as e:
-            record.error = str(e)
+            record.error = f"Onboard fejlede: {type(e).__name__}"
             proceed = False
 
     if proceed:
@@ -443,30 +449,18 @@ def process_test(name: str, hold: str) -> int:
                     else "Onboard returnerede 0, men 'Success: True' blev ikke fundet."
                 )
                 print(f"    [!] FEJL: {record.error}")
-                # Echo onboard output to workflow log so debugging doesn't require opening status mail
-                print()
-                print("=" * 70)
-                print("ONBOARD STDOUT (fuld output for diagnostik):")
-                print("=" * 70)
-                print(stdout)
-                if stderr.strip():
-                    print("=" * 70)
-                    print("ONBOARD STDERR:")
-                    print("=" * 70)
-                    print(stderr)
-                print("=" * 70)
+                print("    [i] Rå subprocess-output er udeladt af hensyn til persondata og secrets.")
         except subprocess.TimeoutExpired:
             record.error = f"Onboard kommando timeout (>{ONBOARD_TIMEOUT_SECONDS//60} min)."
             print(f"    [!] FEJL: {record.error}")
         except Exception as e:
-            record.error = f"Onboard subprocess fejlede: {e}"
+            record.error = f"Onboard subprocess fejlede: {type(e).__name__}"
             print(f"    [!] FEJL (uventet exception): {e!r}")
-            import traceback
-            traceback.print_exc()
+            print("    [i] Traceback er udeladt fra log.")
 
     # Send test summary
     print()
-    print(f"[*] Sending [TEST] status email to {admin_to}…")
+    print("[*] Sending [TEST] status email to configured recipient…")
     service = _build_gmail_service()
     subject, body = _build_summary([record])
     subject = "[TEST] " + subject
@@ -484,12 +478,18 @@ def process_test(name: str, hold: str) -> int:
 # Public entrypoint — used by agent.py and (transitively) by GitHub Actions
 # ---------------------------------------------------------------------------
 def process_emails() -> int:
+    try:
+        approval = require_write_approval("onboarding.process-emails")
+        approval.require("onboarding.onboard")
+    except PolicyViolation as exc:
+        print(f"ERROR: {exc}")
+        return 2
     admin_to = os.environ.get("ADMIN_EMAIL_TO", "").strip()
     if not admin_to:
         print("ERROR: ADMIN_EMAIL_TO not set.")
         return 2
 
-    print(f"[*] Connecting to Gmail (bredballeifpadel@gmail.com)…")
+    print("[*] Connecting to configured Gmail mailbox…")
     service = _build_gmail_service()
 
     print(f"[*] Searching: {GMAIL_QUERY}")
@@ -510,7 +510,7 @@ def process_emails() -> int:
         try:
             msg = _get_full_message(service, msg_id)
         except Exception as e:
-            print(f"[!] Could not fetch message {msg_id}: {e}")
+            print(f"[!] Kunne ikke hente en Gmail-besked: {type(e).__name__}")
             continue
 
         subject = _get_header(msg, "Subject")
@@ -518,9 +518,7 @@ def process_emails() -> int:
         body = _extract_plain_body(msg)
 
         print()
-        print(f"--- Message {msg_id} ---")
-        print(f"    Subject:  {subject}")
-        print(f"    Received: {received}")
+        print("--- Gmail-besked (identifikator og emne redigeret) ---")
 
         record = ProcessedEmail(message_id=msg_id, subject=subject, received=received)
 
@@ -529,8 +527,7 @@ def process_emails() -> int:
         record.hold_id = hold_id
         record.medlem = medlem
         record.medlem_id = medlem_id
-        print(f"    Hold:     {hold!r} (Conventus group id={hold_id or '?'})")
-        print(f"    Medlem:   {medlem!r} (Conventus member id={medlem_id or '?'})")
+        print("    Hold og medlem er parset (værdier redigeret fra log)")
 
         if not hold or not medlem:
             record.error = "Kunne ikke parse 'Hold:' og/eller 'Medlem:' i email-body."
@@ -541,7 +538,7 @@ def process_emails() -> int:
         try:
             type_flag, end_date, start_date = map_hold_to_flags(hold)
         except ValueError as e:
-            record.error = str(e)
+            record.error = f"Onboard fejlede: {type(e).__name__}"
             _label_and_mark_read(service, msg_id, label_err)
             results.append(record)
             continue
@@ -558,33 +555,14 @@ def process_emails() -> int:
         except subprocess.TimeoutExpired as e:
             record.error = f"Onboard kommando timeout (>{ONBOARD_TIMEOUT_SECONDS//60} min)."
             print(f"    [!] FEJL: {record.error}")
-            # Echo whatever output was captured before the kill, for diagnostics.
-            partial_out = (e.stdout or "")
-            partial_err = (e.stderr or "")
-            if isinstance(partial_out, bytes):
-                partial_out = partial_out.decode("utf-8", "replace")
-            if isinstance(partial_err, bytes):
-                partial_err = partial_err.decode("utf-8", "replace")
-            record.onboard_stdout = partial_out
-            record.onboard_stderr = partial_err
-            print("=" * 70)
-            print(f"ONBOARD STDOUT (delvis, før timeout) for message {msg_id}:")
-            print("=" * 70)
-            print(partial_out or "(ingen output fanget før timeout)")
-            if partial_err.strip():
-                print("=" * 70)
-                print(f"ONBOARD STDERR (delvis) for message {msg_id}:")
-                print("=" * 70)
-                print(partial_err)
-            print("=" * 70)
+            print("    [i] Delvist subprocess-output er udeladt fra log.")
             _label_and_mark_read(service, msg_id, label_err)
             results.append(record)
             continue
         except Exception as e:
-            record.error = f"Onboard subprocess fejlede: {e}"
+            record.error = f"Onboard subprocess fejlede: {type(e).__name__}"
             print(f"    [!] FEJL (uventet exception ved start af onboard): {e!r}")
-            import traceback
-            traceback.print_exc()
+            print("    [i] Traceback er udeladt fra log.")
             _label_and_mark_read(service, msg_id, label_err)
             results.append(record)
             continue
@@ -608,23 +586,12 @@ def process_emails() -> int:
             else:
                 _label_and_mark_read(service, msg_id, label_err)
                 print(f"    [!] FEJL: {record.error}")
-            # Echo onboard output to workflow log for diagnostics
-            print()
-            print("=" * 70)
-            print(f"ONBOARD STDOUT for message {msg_id}:")
-            print("=" * 70)
-            print(stdout)
-            if stderr.strip():
-                print("=" * 70)
-                print(f"ONBOARD STDERR for message {msg_id}:")
-                print("=" * 70)
-                print(stderr)
-            print("=" * 70)
+            print("    [i] Rå subprocess-output er udeladt fra log.")
 
         results.append(record)
 
     print()
-    print(f"[*] Sending summary email to {admin_to}…")
+    print("[*] Sending summary email to configured recipient…")
     subject, body = _build_summary(results)
     _send_status_email(service, admin_to, subject, body)
 

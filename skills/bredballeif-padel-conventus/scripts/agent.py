@@ -27,6 +27,23 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Repo-fælles fail-closed kontroller. Direkte `python -m agent` fra skill-mappen
+# understøttes fortsat ved at lokalisere workspace-roden relativt.
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "scripts" / "gdpr_controls.py").exists():
+        sys.path.insert(0, str(_parent / "scripts"))
+        break
+
+from gdpr_controls import (  # noqa: E402
+    ApprovalContext,
+    PolicyViolation,
+    audit_event,
+    emit_audit_event,
+    enforce_record_limit,
+    reject_broad_query,
+    require_write_approval,
+)
+
 # Load .env from project root (walk up from this script's location)
 _script_dir = Path(__file__).resolve().parent
 for _candidate in [_script_dir, *_script_dir.parents]:
@@ -117,12 +134,16 @@ def fetch_members(group_ids: list[str], timeout: float = 180.0, retries: int = 5
             last_err = e
             if attempt < retries:
                 wait = min(2 ** attempt, 30)  # 1s, 2s, 4s, 8s, 16s (capped at 30s)
-                print(f"[!] Conventus API fejl (forsøg {attempt+1}/{retries+1}), prøver igen om {wait}s: {e}")
+                print(
+                    f"[!] Conventus API fejl (forsøg {attempt+1}/{retries+1}), "
+                    f"prøver igen om {wait}s: {type(e).__name__}"
+                )
                 time.sleep(wait)
 
     if xml_data is None:
         raise RuntimeError(
-            f"Conventus API kunne ikke nås efter {retries+1} forsøg: {last_err}"
+            f"Conventus API kunne ikke nås efter {retries+1} forsøg "
+            f"({type(last_err).__name__ if last_err else 'ukendt fejl'})."
         )
 
     root = ET.fromstring(xml_data)
@@ -173,8 +194,12 @@ def resolve_groups(group_arg: str) -> list[str]:
 def print_member(m: dict, verbose: bool = False) -> None:
     """Print a single member's details."""
     if verbose:
-        max_key = max(len(k) for k in m)
-        for k, v in m.items():
+        # Felt-allowlist: adresser, fødselsdato, køn og øvrige rå API-felter
+        # sendes ikke videre til stdout/LLM-kontekst ved et almindeligt opslag.
+        allowed = ("id", "navn", "grupper")
+        max_key = max(len(k) for k in allowed)
+        for k in allowed:
+            v = m.get(k, "")
             if k == "grupper":
                 v = ", ".join(v) if v else "(ingen)"
             if v:
@@ -182,16 +207,23 @@ def print_member(m: dict, verbose: bool = False) -> None:
         print()
     else:
         grupper = ", ".join(m["grupper"]) if m["grupper"] else ""
-        print(f"  {m['id']:>8s}  {m['navn']:35s}  {m['email']:35s}  {m.get('mobil',''):12s}  {grupper}")
+        print(f"  {m['id']:>8s}  {m['navn']:35s}  {grupper}")
 
 
 def cmd_search(args: argparse.Namespace) -> None:
     """Search for members by name."""
+    try:
+        search_term = reject_broad_query(args.name)
+    except PolicyViolation as exc:
+        raise SystemExit(str(exc)) from exc
     group_ids = resolve_groups(args.group)
     members = fetch_members(group_ids)
 
-    search_term = args.name.lower()
-    matches = [m for m in members if search_term in m["navn"].lower()]
+    matches = [m for m in members if search_term.lower() in m["navn"].lower()]
+    try:
+        matches = enforce_record_limit(matches, limit=args.limit, bulk_approved=False)
+    except PolicyViolation as exc:
+        raise SystemExit(str(exc)) from exc
 
     print(f"=== Conventus: Søger '{args.name}' i {len(members)} medlemmer ===\n")
     if not matches:
@@ -207,6 +239,18 @@ def cmd_list(args: argparse.Namespace) -> None:
     """List all members in a group."""
     group_ids = resolve_groups(args.group)
     members = fetch_members(group_ids)
+
+    bulk_approved = False
+    if args.approve_bulk:
+        try:
+            ApprovalContext.from_environment().require("conventus.bulk-read")
+            bulk_approved = True
+        except PolicyViolation as exc:
+            raise SystemExit(str(exc)) from exc
+    try:
+        members = enforce_record_limit(members, limit=args.limit, bulk_approved=bulk_approved)
+    except PolicyViolation as exc:
+        raise SystemExit(str(exc)) from exc
 
     group_label = args.group if args.group in GROUP_ALIASES else ", ".join(group_ids)
     print(f"=== Conventus: {len(members)} medlemmer i '{group_label}' ===\n")
@@ -288,6 +332,11 @@ def cmd_compare(args: argparse.Namespace) -> None:  # noqa: ARG001
 
 def cmd_create_americano(args: argparse.Namespace) -> None:
     """Create an Americano event group in Conventus via browser automation."""
+    approval = require_write_approval("conventus.create-group")
+    emit_audit_event(audit_event(
+        "conventus.group.create", "approved", record_count=1,
+        actor_role=approval.actor_role, correlation_id=approval.correlation_id,
+    ))
     from conventus_group_automation import create_americano
 
     result = create_americano(
@@ -309,6 +358,11 @@ def cmd_create_americano(args: argparse.Namespace) -> None:
 
 def cmd_create_mexicano(args: argparse.Namespace) -> None:
     """Create a Mexicano event group in Conventus via browser automation (duplicates template)."""
+    approval = require_write_approval("conventus.create-group")
+    emit_audit_event(audit_event(
+        "conventus.group.create", "approved", record_count=1,
+        actor_role=approval.actor_role, correlation_id=approval.correlation_id,
+    ))
     from conventus_group_automation import create_mexicano
 
     result = create_mexicano(
@@ -330,6 +384,11 @@ def cmd_create_mexicano(args: argparse.Namespace) -> None:
 
 def cmd_create_group(args: argparse.Namespace) -> None:
     """Create a generic group in Conventus via browser automation."""
+    approval = require_write_approval("conventus.create-group")
+    emit_audit_event(audit_event(
+        "conventus.group.create", "approved", record_count=1,
+        actor_role=approval.actor_role, correlation_id=approval.correlation_id,
+    ))
     from conventus_group_automation import ConventusGroupAutomation, GroupConfig
 
     config = GroupConfig(
@@ -384,9 +443,15 @@ def main() -> None:
     p_search = sub.add_parser("search", help="Search for a member by name")
     p_search.add_argument("--name", required=True, help="Name (or part of name) to search for")
     p_search.add_argument("--group", default="all", help="Group alias or comma-separated IDs (default: all)")
+    p_search.add_argument("--limit", type=int, default=10, choices=range(1, 11), metavar="1..10")
 
     p_list = sub.add_parser("list", help="List all members in a group")
     p_list.add_argument("--group", default="all", help="Group alias or comma-separated IDs (default: all)")
+    p_list.add_argument("--limit", type=int, default=10, help="Maksimalt antal poster (default: 10)")
+    p_list.add_argument(
+        "--approve-bulk", action="store_true",
+        help="Kræver samtidig tidsbegrænset conventus.bulk-read-godkendelse fra gatewayen",
+    )
 
     sub.add_parser("stats", help="Show membership statistics per year with churn analysis (2021-2026)")
     sub.add_parser("compare", help="Compare Conventus vs HalBooking — show members only in one system")
@@ -396,11 +461,12 @@ def main() -> None:
     )
     p_budget.add_argument(
         "--department",
-        default="",
-        help="Department label; use 'Padel' as alias. Empty means all departments.",
+        required=True,
+        help="Department label; use 'Padel' as alias. Et tomt/all-department opslag er ikke tilladt.",
     )
     p_budget.add_argument(
-        "--years", type=int, default=3, help="Number of latest accounting years (default: 3)"
+        "--years", type=int, default=3, choices=range(1, 4), metavar="1..3",
+        help="Number of latest accounting years (default: 3, maximum: 3)"
     )
     p_budget.add_argument("--no-headless", action="store_true", help="Show browser window")
 

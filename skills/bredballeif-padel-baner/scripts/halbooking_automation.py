@@ -26,7 +26,11 @@ from playwright.sync_api import (
 load_dotenv()
 
 SCREENSHOTS_DIR = Path(__file__).parent / "screenshots"
-SCREENSHOTS_DIR.mkdir(exist_ok=True)
+DIAGNOSTIC_SCREENSHOTS_ENABLED = (
+    os.getenv("BIF_ALLOW_DIAGNOSTIC_SCREENSHOTS", "false").strip().lower() == "true"
+)
+if DIAGNOSTIC_SCREENSHOTS_ENABLED:
+    SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
 
 class HalBookingAutomation:
@@ -861,6 +865,8 @@ class HalBookingAutomation:
     # -- helpers -------------------------------------------------------------
     def _screenshot(self, name: str) -> Path:
         path = SCREENSHOTS_DIR / f"{name}.png"
+        if not DIAGNOSTIC_SCREENSHOTS_ENABLED:
+            return path
         try:
             self.page.screenshot(path=str(path), full_page=True)
         except Exception:

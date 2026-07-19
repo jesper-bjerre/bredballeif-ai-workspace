@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "status": "REQUIRES_OPENCLAW_INTEGRATION",
+  "defaults": {
+    "max_records": 10,
+    "allow_non_eu_fallback": false,
+    "unknown_provider_behavior": "DENY",
+    "classification_mode": "HIGHEST_ACTUAL_INVOCATION_PAYLOAD",
+    "sensitive_external_llm": "DENY",
+    "secret_llm": "DENY",
+    "write_approval_max_minutes": 15
+  },
+  "skills": {
+    "bredballeif-boerneattest": {
+      "data_classification": ["PERSONAL", "SENSITIVE"],
+      "allowed_regions": ["LOCAL"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "requires_approval_for_sensitive_reads": true,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-fondsansoegning": {
+      "data_classification": ["PUBLIC", "INTERNAL", "PERSONAL"],
+      "allowed_regions": ["EU", "EEA"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-oekonomi": {
+      "data_classification": ["INTERNAL"],
+      "allowed_regions": ["EU", "EEA"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-padel-baner": {
+      "data_classification": ["INTERNAL", "SECRET"],
+      "allowed_regions": ["LOCAL"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-padel-conventus": {
+      "data_classification": ["INTERNAL", "PERSONAL"],
+      "allowed_regions": ["EU", "EEA"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-padel-halbooking": {
+      "data_classification": ["PERSONAL", "SECRET"],
+      "allowed_regions": ["EU", "EEA", "LOCAL"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-padel-kontingent-beregner": {
+      "data_classification": ["PUBLIC", "INTERNAL"],
+      "allowed_regions": ["EU", "EEA"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": false,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-padel-onboarding": {
+      "data_classification": ["PERSONAL", "SECRET"],
+      "allowed_regions": ["EU", "EEA", "LOCAL"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "allow_non_eu_fallback": false
+    },
+    "bredballeif-vedtaegter": {
+      "data_classification": ["PUBLIC", "INTERNAL"],
+      "allowed_regions": ["EU", "EEA"],
+      "max_records": 10,
+      "requires_human_approval_for_writes": true,
+      "allow_non_eu_fallback": false
+    }
+  }
+}

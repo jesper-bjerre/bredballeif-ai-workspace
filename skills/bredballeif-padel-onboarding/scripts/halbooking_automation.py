@@ -25,7 +25,11 @@ from playwright.sync_api import (
 load_dotenv()
 
 SCREENSHOTS_DIR = Path(__file__).parent / "screenshots"
-SCREENSHOTS_DIR.mkdir(exist_ok=True)
+DIAGNOSTIC_SCREENSHOTS_ENABLED = (
+    os.getenv("BIF_ALLOW_DIAGNOSTIC_SCREENSHOTS", "false").strip().lower() == "true"
+)
+if DIAGNOSTIC_SCREENSHOTS_ENABLED:
+    SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +501,7 @@ class HalBookingAutomation:
                         break
         except Exception as e:
             result["warnings"] = result.get("warnings", [])
-            result["warnings"].append(f"Kunne ikke sætte medlemsgruppe: {e}")
+            result["warnings"].append(f"Kunne ikke sætte medlemsgruppe: {type(e).__name__}")
 
         # After page reload, fill the other fields
         # Navn
@@ -526,7 +530,7 @@ class HalBookingAutomation:
             pass
         result["password"] = password.strip()
         if password:
-            print(f"  [+] Adgangskode (fra oprettelsesformular): {password}")
+            print("  [+] Adgangskode oprettet (værdi redigeret fra log/output)")
             result["steps_completed"].append("password_read_from_form")
 
         # Email checkboxes
@@ -587,7 +591,7 @@ class HalBookingAutomation:
             fallback_pw = self.read_member_password()
             if fallback_pw:
                 result["password"] = fallback_pw
-                print(f"  [+] Adgangskode (fallback Login info tab): {fallback_pw}")
+                print("  [+] Adgangskode fundet (værdi redigeret fra log/output)")
                 result["steps_completed"].append("5_read_password_fallback")
             else:
                 result["warnings"] = result.get("warnings", [])
@@ -929,7 +933,7 @@ class HalBookingAutomation:
             p.wait_for_load_state("networkidle")
             p.wait_for_timeout(2000)
         except Exception as e:
-            result["error"] = f"Fejl ved klik på 'Send email': {e}"
+            result["error"] = f"Fejl ved klik på 'Send email': {type(e).__name__}"
             return
 
         # Verify modal is open
@@ -953,7 +957,7 @@ class HalBookingAutomation:
             subject_field.fill(subject[:50])  # maxlength=50
             body_field.fill(body[:3000])       # maxlength=3000
         except Exception as e:
-            result["error"] = f"Fejl ved udfyldning af email-felter: {e}"
+            result["error"] = f"Fejl ved udfyldning af email-felter: {type(e).__name__}"
             return
 
         result["steps_completed"].append("email_fields_filled")
@@ -982,7 +986,7 @@ class HalBookingAutomation:
             p.wait_for_load_state("networkidle")
             p.wait_for_timeout(3000)
         except Exception as e:
-            result["error"] = f"Fejl ved klik på 'Send': {e}"
+            result["error"] = f"Fejl ved klik på 'Send': {type(e).__name__}"
             return
 
         self._screenshot("email_03_after_send")
@@ -1348,7 +1352,7 @@ class HalBookingAutomation:
 
             return self._extract_detail_fields()
         except Exception as e:
-            print(f"[!] Could not click member button: {e}")
+            print(f"[!] Could not click member button: {type(e).__name__}")
             return None
 
     def _extract_detail_fields(self) -> dict[str, str]:
@@ -1717,15 +1721,6 @@ class HalBookingAutomation:
             )
             return result
 
-        # Dump the grid HTML so the parser can be refined if the layout differs.
-        try:
-            grid_html = container.evaluate("el => el.outerHTML")
-            (SCREENSHOTS_DIR / "baner_grid.html").write_text(
-                grid_html, encoding="utf-8"
-            )
-        except Exception:
-            pass
-
         # --- Extract the per-column slot blocks ---
         # Walk each of the (up to) 3 columns and collect candidate slot blocks.
         # A block is anything carrying a time (in text or title) or an onclick.
@@ -1777,9 +1772,8 @@ class HalBookingAutomation:
         result["success"] = bool(result["courts"]) and any_slots
         if not any_slots:
             result["note"] = (
-                "Grid fundet, men ingen tidsblokke kunne parses. Råt grid-HTML "
-                "er gemt i screenshots/baner_grid.html — del den for at finjustere "
-                "parseren."
+                "Grid fundet, men ingen tidsblokke kunne parses. Råt HTML gemmes "
+                "ikke; brug kun eksplicit godkendt, kortlivet diagnostik."
             )
         return result
 
@@ -2175,6 +2169,8 @@ class HalBookingAutomation:
 
     def _screenshot(self, name: str) -> Path:
         path = SCREENSHOTS_DIR / f"{name}.png"
+        if not DIAGNOSTIC_SCREENSHOTS_ENABLED:
+            return path
         self.page.screenshot(path=str(path), full_page=True)
         return path
 

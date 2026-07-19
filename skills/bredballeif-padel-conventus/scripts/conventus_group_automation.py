@@ -33,7 +33,11 @@ from playwright.sync_api import (
 load_dotenv()
 
 SCREENSHOTS_DIR = Path(__file__).parent / "screenshots"
-SCREENSHOTS_DIR.mkdir(exist_ok=True)
+DIAGNOSTIC_SCREENSHOTS_ENABLED = (
+    os.getenv("BIF_ALLOW_DIAGNOSTIC_SCREENSHOTS", "false").strip().lower() == "true"
+)
+if DIAGNOSTIC_SCREENSHOTS_ENABLED:
+    SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
 # Conventus department IDs
 AFDELING_PADEL = "55804"
@@ -148,6 +152,8 @@ class ConventusGroupAutomation:
     def _screenshot(self, name: str) -> str:
         """Take a screenshot for debugging. Returns the file path."""
         path = SCREENSHOTS_DIR / f"conventus_{name}.png"
+        if not DIAGNOSTIC_SCREENSHOTS_ENABLED:
+            return str(path)
         try:
             self.page.screenshot(path=str(path), full_page=False)
         except Exception:
@@ -299,7 +305,7 @@ class ConventusGroupAutomation:
                 if name or inp_id:
                     print(f"[D]   input name='{name}' id='{inp_id}' type='{inp_type}'")
         except Exception as e:
-            print(f"[D] Could not enumerate inputs: {e}")
+            print(f"[D] Could not enumerate inputs: {type(e).__name__}")
 
         # Check page content snippet for key indicators
         try:
@@ -929,7 +935,7 @@ def create_americano(
 
         return result
     except Exception as e:
-        return GroupResult(success=False, error=str(e))
+        return GroupResult(success=False, error=f"Automation failed: {type(e).__name__}")
     finally:
         auto.stop()
 
@@ -979,7 +985,7 @@ def create_mexicano(
 
         return result
     except Exception as e:
-        return GroupResult(success=False, error=str(e))
+        return GroupResult(success=False, error=f"Automation failed: {type(e).__name__}")
     finally:
         auto.stop()
 

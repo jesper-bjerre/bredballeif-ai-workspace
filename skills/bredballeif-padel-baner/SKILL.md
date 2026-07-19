@@ -88,6 +88,13 @@ OpenClaw/Linux kan whiteliste den selv-lokaliserende wrapper:
 ./bin/bredballeif-padel-baner.sh 05-07-2026 18:00 20:00
 ```
 
+I et særskilt sikret adminmiljø kan booking-wrapperen eksponeres; den accepterer kun `book-court`,
+som stadig kræver `halbooking.court.book`-approval:
+
+```bash
+./bin/bredballeif-padel-baner-admin.sh book-court --date 05-07-2026 --courts 1 --start-time 18:00
+```
+
 ## Sådan booker du
 
 **Booking sker ALTID via Multi-booking** (`admin_multi.asp`), som giver en
@@ -164,6 +171,10 @@ Kommandoen udskriver:
 
 ## Vigtigt
 - Svar altid på dansk og hold det kort.
+- Standard-wrapperen eksponerer kun `availability`. Admin-wrapperens `book-court` kræver en kortlivet
+  `halbooking.court.book`-approval fra gatewayen.
+- Dør-/adgangskoder er SECRET og må ikke sendes til en LLM eller log. Hent dem via en godkendt sikker
+  kanal i HalBooking; CLI-output redigerer værdien.
 - Find aldrig på ledighed — kør altid `availability`-kommandoen og brug `Ledige baner: X af 3`.
 - Tæl aldrig baner selv i hovedet — brug tallet fra OPSUMMERING.
 - **Før booking:** kør altid `availability` først for at verificere ledighed.

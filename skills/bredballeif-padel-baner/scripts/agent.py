@@ -20,8 +20,21 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from halbooking_automation import HalBookingAutomation
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "scripts" / "gdpr_controls.py").exists():
+        sys.path.insert(0, str(_parent / "scripts"))
+        break
+
+from gdpr_controls import (  # noqa: E402
+    PolicyViolation,
+    audit_event,
+    emit_audit_event,
+    require_write_approval,
+)
 
 _WEEKDAYS_DA = [
     "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag",
@@ -78,8 +91,7 @@ def cmd_availability(
             for s in court["slots"]:
                 mark = "LEDIG " if s["status"] == "free" else "OPTAGET"
                 end = f"–{s['end']}" if s["end"] else ""
-                label = f"  {s['label']}" if s["label"] else ""
-                print(f"    [{mark}] {s['time']}{end}{label}")
+                print(f"    [{mark}] {s['time']}{end}")
             print()
 
         # --- Explicit summary so the answer can't be miscounted ---
@@ -164,7 +176,7 @@ def cmd_book_court(
             print(f"  Tekst:   {text}")
         access_code = result.get("access_code", "")
         if access_code:
-            print(f"  Adgangskode: {access_code}")
+            print("  Adgangskode: [REDACTED — hent den i HalBooking via en sikker kanal]")
         if result.get("note"):
             print(f"  Note:    {result['note']}")
 
@@ -224,6 +236,17 @@ def main() -> None:
         help="Show the browser window (non-headless)",
     )
     args = parser.parse_args()
+
+    if args.action == "book-court":
+        try:
+            approval = require_write_approval("halbooking.court.book")
+        except PolicyViolation as exc:
+            parser.error(str(exc))
+        court_count = len([c for c in (args.courts or "").split(",") if c.strip()])
+        emit_audit_event(audit_event(
+            "halbooking.court.book", "approved", record_count=court_count,
+            actor_role=approval.actor_role, correlation_id=approval.correlation_id,
+        ))
 
     bot = HalBookingAutomation(headless=not args.visible)
 

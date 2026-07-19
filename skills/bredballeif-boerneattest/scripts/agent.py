@@ -1,14 +1,13 @@
 """
-Børneattest-agent for Bredballe IF.
+Børneattest-kontrol for Bredballe IF.
 
-Hjælper med at administrere indhentning af børneattester på frivillige
+Hjælper bestyrelsen med read-only kontrol af manuelt registrerede godkendelsesdatoer
 på tværs af alle afdelinger i Bredballe IF (undtagen fodbold, som ikke bruger Conventus).
+Skillen indhenter, registrerer eller sender ikke CPR-numre eller børneattester.
 
 Brug:
   python -m agent list
   python -m agent list --group 912134
-  python -m agent welcome-email --name "Per Hansen" --afdeling "Padel"
-  python -m agent welcome-email --name "Per Hansen" --afdeling "Padel" --link "https://..."
   python -m agent annual-report
   python -m agent afdelinger
 
@@ -19,7 +18,7 @@ Bemærk om Conventus-felter:
 Bemærk om grupper:
   Den autoritative kilde til `list` og `annual-report` er fælles-gruppen
   1002724 ("06 - Børneattest frivillige"). FRIVILLIGE_GROUPS er kun vejledende
-  og bruges alene til at slå velkomst-mail-links op pr. afdeling.
+  og bruges alene til at slå frivilliglinks op pr. afdeling.
 
 Krav:
   CONVENTUS_ID og CONVENTUS_API_KEY i .env eller miljøvariabler.
@@ -46,6 +45,19 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from dotenv import load_dotenv
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "scripts" / "gdpr_controls.py").exists():
+        sys.path.insert(0, str(_parent / "scripts"))
+        break
+
+from gdpr_controls import (  # noqa: E402
+    ApprovalContext,
+    PolicyViolation,
+    audit_event,
+    emit_audit_event,
+    enforce_record_limit,
+)
 
 # Indlæs .env fra projekt-roden (søger opad fra scriptets placering)
 _script_dir = Path(__file__).resolve().parent
@@ -144,14 +156,15 @@ def fetch_members(group_ids: list[str], timeout: float = 20.0, retries: int = 2)
                 wait = 2 ** attempt
                 print(
                     f"[!] Conventus API fejl (forsøg {attempt + 1}/{retries + 1}),"
-                    f" prøver igen om {wait}s: {e}",
+                    f" prøver igen om {wait}s: {type(e).__name__}",
                     file=sys.stderr,
                 )
                 time.sleep(wait)
 
     if xml_data is None:
         raise RuntimeError(
-            f"Conventus API kunne ikke nås efter {retries + 1} forsøg: {last_err}"
+            f"Conventus API kunne ikke nås efter {retries + 1} forsøg "
+            f"({type(last_err).__name__ if last_err else 'ukendt fejl'})."
         )
 
     root = ET.fromstring(xml_data)
@@ -221,7 +234,10 @@ def fetch_afdelinger(timeout: float = 20.0, retries: int = 2) -> list[dict]:
                 time.sleep(2 ** attempt)
 
     if xml_data is None:
-        raise RuntimeError(f"Conventus API kunne ikke nås efter {retries + 1} forsøg: {last_err}")
+        raise RuntimeError(
+            f"Conventus API kunne ikke nås efter {retries + 1} forsøg "
+            f"({type(last_err).__name__ if last_err else 'ukendt fejl'})."
+        )
 
     root = ET.fromstring(xml_data)
     return [
@@ -253,7 +269,10 @@ def fetch_grupper(afdeling_id: str | None = None, timeout: float = 20.0, retries
                 time.sleep(2 ** attempt)
 
     if xml_data is None:
-        raise RuntimeError(f"Conventus API kunne ikke nås efter {retries + 1} forsøg: {last_err}")
+        raise RuntimeError(
+            f"Conventus API kunne ikke nås efter {retries + 1} forsøg "
+            f"({type(last_err).__name__ if last_err else 'ukendt fejl'})."
+        )
 
     root = ET.fromstring(xml_data)
     grupper = []
@@ -298,7 +317,10 @@ def fetch_group_roles(group_ids: list[str], timeout: float = 20.0, retries: int 
                 time.sleep(2 ** attempt)
 
     if xml_data is None:
-        raise RuntimeError(f"Conventus API kunne ikke nås efter {retries + 1} forsøg: {last_err}")
+        raise RuntimeError(
+            f"Conventus API kunne ikke nås efter {retries + 1} forsøg "
+            f"({type(last_err).__name__ if last_err else 'ukendt fejl'})."
+        )
 
     root = ET.fromstring(xml_data)
 
@@ -438,6 +460,18 @@ def cmd_list(args: argparse.Namespace) -> int:
     print(f"[*] Henter frivillige fra Conventus ({group_label})…")
     members = fetch_members(group_ids)
 
+    bulk_approved = False
+    if args.approve_bulk:
+        try:
+            ApprovalContext.from_environment().require("boerneattest.bulk-read")
+            bulk_approved = True
+        except PolicyViolation as exc:
+            raise SystemExit(str(exc)) from exc
+    try:
+        members = enforce_record_limit(members, limit=args.limit, bulk_approved=bulk_approved)
+    except PolicyViolation as exc:
+        raise SystemExit(str(exc)) from exc
+
     if not members:
         print("  Ingen frivillige fundet i de valgte grupper.")
         return 0
@@ -447,10 +481,10 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     print(f"\n=== Bredballe IF: {len(members)} frivillige ===\n")
     print(
-        f"  {'ID':>8}  {'Navn':35}  {'Email':35}  {'Mobil':13}  {'Atteststatus':30}  {'Fællesgruppe':12}  Gruppe"
+        f"  {'ID':>8}  {'Navn':35}  {'Atteststatus':30}  {'Fællesgruppe':12}  Gruppe"
     )
     print(
-        f"  {'─' * 8}  {'─' * 35}  {'─' * 35}  {'─' * 13}  {'─' * 30}  {'─' * 12}  {'─' * 30}"
+        f"  {'─' * 8}  {'─' * 35}  {'─' * 30}  {'─' * 12}  {'─' * 30}"
     )
 
     missing_common = []
@@ -461,7 +495,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         if in_common == "NEJ":
             missing_common.append(m)
         print(
-            f"  {m['id']:>8}  {m['navn']:35}  {m['email']:35}  {m['mobil']:13}  {status:30}  {in_common:12}  {grupper}"
+            f"  {m['id']:>8}  {m['navn']:35}  {status:30}  {in_common:12}  {grupper}"
         )
 
     print(f"\n  Total: {len(members)} frivillige")
@@ -484,7 +518,7 @@ def _find_link_for_afdeling(afdeling: str) -> str:
 
 
 def cmd_welcome_email(args: argparse.Namespace) -> int:
-    """Generér velkomst-mail til ny frivillig (skabelon fra Bredballe IF's procedure)."""
+    """Generér en besked om den manuelle proces uden CPR- eller attestoplysninger."""
     navn = args.name
     afdeling = args.afdeling
     already_registered = getattr(args, "already_registered", False)
@@ -502,7 +536,7 @@ def cmd_welcome_email(args: argparse.Namespace) -> int:
     print(f"Kopiér teksten nedenfor og send den til {navn}")
     print("=" * 70)
     print(f"""
-Emne: Bredballe IF — indhentning af børneattest
+Emne: Bredballe IF — børneattest for frivillige
 
 Hej {navn}
 
@@ -511,21 +545,11 @@ som skal arbejde med børn under 15 år.
 
 {trin1_tekst}
 
-{'Trin 2' if not already_registered else 'Vi mangler blot'}: Oplys dit fulde navn og de SIDSTE 4 CIFRE af dit CPR-NR til udvalget:
+Den børneattestansvarlige kontakter dig om den videre proces. AI-agenten modtager eller behandler
+ikke CPR-nummer, børneattest eller oplysninger om attesternes indhold.
 
-  Afdelingsnavn:             Bredballe IF {afdeling}
-  Dit fulde navn:            {navn}
-  4 sidste cifre i CPR-NR:  ________________________________
-
-Hvis du ikke ønsker at sende disse oplysninger via email, kan du i stedet
-oplyse dem ved fysisk fremmøde, pr. telefon eller med post.
-Dette aftales nærmere med afdelingens udvalg.
-
-{'Trin 3' if not already_registered else 'Herefter'}: Afdelingens udvalg anmoder politiet om at udlevere din børneattest.
-Din email med CPR-NR slettes permanent bagefter.
-
-{'Trin 4' if not already_registered else 'Til sidst'}: Via e-Boks vil politiet anmode dig om tilladelse til at sende din
-børneattest til Bredballe IF. Du har 14 dage til at acceptere.
+Når processen er afsluttet, registrerer den børneattestansvarlige manuelt datoen for godkendelsen
+i Conventus. AI-agenten kan efterfølgende læse datoen for at hjælpe bestyrelsen med kontrollen.
 
 Mange tak for din hjælp — vi glæder os til samarbejdet!
 
@@ -533,11 +557,10 @@ Med venlig hilsen
 {afdeling}s udvalg i Bredballe IF
 """)
     print("=" * 70)
-    print("\n  Husk (udvalget):")
-    print("  1. Bestil børneattesten på https://politi.dk/straffeattest/bestil-boerneattest")
-    print("     (login med erhvervs MitID)")
-    print("  2. Opdater Conventus Børneattest-felt med 'Ansøgt dd-mm-yyyy' straks efter bestilling")
-    print("  3. Tjek virk.dk 14 dage efter — opdater Børneattest-feltet med resultatet")
+    print("\n  Husk (den børneattestansvarlige):")
+    print("  1. Gennemfør indhentningen uden for AI-skillen")
+    print("  2. Registrér kun godkendelsesdatoen manuelt i Conventus")
+    print("  3. Registrér ikke CPR-nummer, attestdokument eller attestindhold i feltet")
     print("=" * 70 + "\n")
     return 0
 
@@ -564,12 +587,12 @@ def cmd_annual_report(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Samtlige frivillige ({len(members)} i alt):\n")
-    print(f"  {'Navn':35}  {'Email':35}  Atteststatus")
-    print(f"  {'─' * 35}  {'─' * 35}  {'─' * 30}")
+    print(f"  {'Navn':35}  Atteststatus")
+    print(f"  {'─' * 35}  {'─' * 30}")
 
     for m in sorted(members, key=lambda x: x["navn"]):
         status = attest_status(m.get("boerneattest_dato", ""))
-        print(f"  {m['navn']:35}  {m['email']:35}  {status}")
+        print(f"  {m['navn']:35}  {status}")
 
     mangler = [
         m for m in members
@@ -697,13 +720,13 @@ def cmd_u15_trainers(args: argparse.Namespace) -> int:
     if not frivillige_trainere:
         print("Ingen fundet i afdelingens frivilliggruppe.")
     else:
-        print(f"  {'ID':>8}  {'Navn':35}  {'Rolle':18}  {'Atteststatus':30}  {'Fællesgruppe':12}  {'Email':35}")
-        print(f"  {'─' * 8}  {'─' * 35}  {'─' * 18}  {'─' * 30}  {'─' * 12}  {'─' * 35}")
+        print(f"  {'ID':>8}  {'Navn':35}  {'Rolle':18}  {'Atteststatus':30}  {'Fællesgruppe':12}")
+        print(f"  {'─' * 8}  {'─' * 35}  {'─' * 18}  {'─' * 30}  {'─' * 12}")
         for t in sorted(frivillige_trainere, key=lambda x: x['navn']):
             rolle = ", ".join(sorted(t["titles"])) or "Leder"
             status = t.get("atteststatus", "Mangler")
             in_common = "Ja" if t.get("i_faellesgruppe") else "NEJ"
-            print(f"  {t['id']:>8}  {t['navn']:35}  {rolle:18}  {status:30}  {in_common:12}  {t['email']:35}")
+            print(f"  {t['id']:>8}  {t['navn']:35}  {rolle:18}  {status:30}  {in_common:12}")
 
     print(f"\n  U15-hold kontrolleret: {len(u15_hold_ids)}")
     for gid in u15_hold_ids:
@@ -910,14 +933,12 @@ def cmd_grupper(args: argparse.Namespace) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="bredballeif-boerneattest",
-        description="Børneattest-agent for Bredballe IF — administrér frivilliges atteststatus",
+        description="Bredballe IF — read-only kontrol af manuelt registrerede godkendelsesdatoer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Eksempler:
   python -m agent list
   python -m agent list --group 912134
-  python -m agent welcome-email --name "Per Hansen" --afdeling "Padel"
-  python -m agent welcome-email --name "Trine Rose" --afdeling "Padel" --already-registered
   python -m agent annual-report
   python -m agent afdelinger
   python -m agent grupper --afdeling "Esport"
@@ -933,11 +954,16 @@ Eksempler:
         metavar="ID[,ID]",
         help="Kommaseparerede Conventus gruppe-ID'er (default: fælles-gruppe 1002724)",
     )
+    p_list.add_argument("--limit", type=int, default=10, help="Maksimalt antal poster (default: 10)")
+    p_list.add_argument(
+        "--approve-bulk", action="store_true",
+        help="Kræver samtidig tidsbegrænset boerneattest.bulk-read-godkendelse fra gatewayen",
+    )
 
     # welcome-email
     p_welcome = sub.add_parser(
         "welcome-email",
-        help="Generér velkomst-mail med børneattest-instruktioner til ny frivillig",
+        help="Generér besked om den manuelle proces uden CPR- eller attestoplysninger",
     )
     p_welcome.add_argument("--name", required=True, metavar="NAVN", help="Den frivilliges fulde navn")
     p_welcome.add_argument("--afdeling", required=True, metavar="AFDELING", help="Afdelingsnavn, fx 'Padel'")
@@ -1007,6 +1033,20 @@ Eksempler:
     if args.action is None:
         parser.print_help()
         sys.exit(0)
+
+    sensitive_actions = {"list", "annual-report", "afdeling-attest", "u15-trainers"}
+    if args.action in sensitive_actions:
+        try:
+            approval = ApprovalContext.from_environment()
+            approval.require("boerneattest.sensitive-read")
+            if args.action == "annual-report":
+                approval.require("boerneattest.bulk-read")
+        except PolicyViolation as exc:
+            parser.error(str(exc))
+        emit_audit_event(audit_event(
+            f"boerneattest.{args.action}", "approved", actor_role=approval.actor_role,
+            correlation_id=approval.correlation_id,
+        ))
 
     dispatch = {
         "list": cmd_list,

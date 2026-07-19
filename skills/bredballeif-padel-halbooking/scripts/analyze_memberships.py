@@ -1,4 +1,4 @@
-"""
+r"""
 Cross-reference Conventus members with HalBooking active memberships.
 
 Usage (from skill root):
@@ -83,11 +83,11 @@ def main() -> None:
             })
 
         except Exception as e:
-            print(f"FEJL: {e}")
+            print(f"FEJL: {type(e).__name__}")
             results.append({
                 "navn": navn,
                 "conventus_gruppe": conventus_grupper,
-                "halbooking_status": f"FEJL: {e}",
+                "halbooking_status": f"FEJL: {type(e).__name__}",
                 "hb_medlemsnr": "",
                 "active_memberships": [],
             })

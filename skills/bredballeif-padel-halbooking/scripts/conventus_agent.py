@@ -117,12 +117,16 @@ def fetch_members(group_ids: list[str], timeout: float = 180.0, retries: int = 5
             last_err = e
             if attempt < retries:
                 wait = min(2 ** attempt, 30)  # 1s, 2s, 4s, 8s, 16s (capped at 30s)
-                print(f"[!] Conventus API fejl (forsøg {attempt+1}/{retries+1}), prøver igen om {wait}s: {e}")
+                print(
+                    f"[!] Conventus API fejl (forsøg {attempt+1}/{retries+1}), "
+                    f"prøver igen om {wait}s: {type(e).__name__}"
+                )
                 time.sleep(wait)
 
     if xml_data is None:
         raise RuntimeError(
-            f"Conventus API kunne ikke nås efter {retries+1} forsøg: {last_err}"
+            f"Conventus API kunne ikke nås efter {retries+1} forsøg "
+            f"({type(last_err).__name__ if last_err else 'ukendt fejl'})."
         )
 
     root = ET.fromstring(xml_data)
@@ -173,8 +177,10 @@ def resolve_groups(group_arg: str) -> list[str]:
 def print_member(m: dict, verbose: bool = False) -> None:
     """Print a single member's details."""
     if verbose:
-        max_key = max(len(k) for k in m)
-        for k, v in m.items():
+        allowed = ("id", "navn", "grupper")
+        max_key = max(len(k) for k in allowed)
+        for k in allowed:
+            v = m.get(k, "")
             if k == "grupper":
                 v = ", ".join(v) if v else "(ingen)"
             if v:
@@ -182,7 +188,7 @@ def print_member(m: dict, verbose: bool = False) -> None:
         print()
     else:
         grupper = ", ".join(m["grupper"]) if m["grupper"] else ""
-        print(f"  {m['id']:>8s}  {m['navn']:35s}  {m['email']:35s}  {m.get('mobil',''):12s}  {grupper}")
+        print(f"  {m['id']:>8s}  {m['navn']:35s}  {grupper}")
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -315,7 +321,7 @@ def cmd_compare(args: argparse.Namespace) -> None:  # noqa: ARG001
     except Exception as e:
         stderr = proc.stderr.decode("utf-8", errors="replace")
         stdout = proc.stdout.decode("utf-8", errors="replace")
-        print(f"[!] Kunne ikke parse HalBooking output: {e}\n{stdout[:500]}\n{stderr[:500]}")
+        print(f"[!] Kunne ikke parse HalBooking output: {type(e).__name__}; rå streams er udeladt")
         return
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -359,14 +365,12 @@ def cmd_compare(args: argparse.Namespace) -> None:  # noqa: ARG001
     print(f"  Kun i HalBooking (IKKE i Conventus): {len(only_in_hb)}")
     print(f"{'='*70}")
     if only_in_hb:
-        print(f"  {'Medlemsnr':>10}  {'Navn':30}  {'Email':35}  Mobil")
-        print(f"  {'-'*10}  {'-'*30}  {'-'*35}  {'-'*12}")
-        for m in sorted(only_in_hb, key=lambda x: x.get("Navn") or x.get("navn") or ""):
+        print(f"  {'Medlemsnr':>10}  {'Navn':30}")
+        print(f"  {'-'*10}  {'-'*30}")
+        for m in sorted(only_in_hb, key=lambda x: x.get("Navn") or x.get("navn") or "")[:10]:
             nr    = m.get("Medlemsnr", "")
             navn  = m.get("Navn") or m.get("navn") or ""
-            email = m.get("Email") or m.get("email") or ""
-            mobil = m.get("Mobil") or m.get("mobil") or ""
-            print(f"  {nr:>10}  {navn:30}  {email:35}  {mobil}")
+            print(f"  {nr:>10}  {navn:30}")
     else:
         print("  (ingen)")
 
@@ -374,11 +378,11 @@ def cmd_compare(args: argparse.Namespace) -> None:  # noqa: ARG001
     print(f"  Kun i Conventus (IKKE i HalBooking): {len(only_in_conv)}")
     print(f"{'='*70}")
     if only_in_conv:
-        print(f"  {'ID':>8}  {'Navn':30}  {'Email':35}  Mobil  Grupper")
-        print(f"  {'-'*8}  {'-'*30}  {'-'*35}  {'-'*12}  {'-'*20}")
-        for m in sorted(only_in_conv, key=lambda x: x["navn"]):
+        print(f"  {'ID':>8}  {'Navn':30}  Grupper")
+        print(f"  {'-'*8}  {'-'*30}  {'-'*20}")
+        for m in sorted(only_in_conv, key=lambda x: x["navn"])[:10]:
             grupper = ", ".join(m["grupper"]) if m["grupper"] else ""
-            print(f"  {m['id']:>8}  {m['navn']:30}  {m['email']:35}  {m.get('mobil',''):12}  {grupper}")
+            print(f"  {m['id']:>8}  {m['navn']:30}  {grupper}")
     else:
         print("  (ingen)")
 
