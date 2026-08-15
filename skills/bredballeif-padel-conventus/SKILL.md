@@ -57,7 +57,8 @@ python -m agent budget-report --department Padel --years 4
   `list-group-web`. Det kræver `conventus.bulk-read`, fordi medlemsdata forlader browserfanen.
 - Hvis autentificeret web-login mangler: bed brugeren logge ind i den valgte browser. Forsøg ikke
   API'et som fallback.
-- Brug kun API'et til navnesøgning, statistik og udtrykkeligt afgrænsede opslag på højst 10 poster.
+- Brug API'et til at hente gruppemetadata, navnesøgning, statistik og udtrykkeligt afgrænsede
+  medlemsopslag på højst 10 poster.
 
 ## Vis hele gruppen i Conventus-browseren
 
@@ -73,6 +74,36 @@ Brug denne arbejdsgang, når brugeren beder om at få medlemmerne vist:
    ind i samme browser.
 
 Denne arbejdsgang viser alle medlemmer i Conventus uden at kopiere medlemslisten ud af systemet.
+
+## Hent grupper (read-only API)
+
+Hent gruppeoversigten fra Conventus' officielle XML-endpoint:
+
+```text
+GET https://www.conventus.dk/dataudv/api/adressebog/get_grupper.php?forening=<CONVENTUS_ID>&key=<CONVENTUS_API_KEY>
+```
+
+Læs altid `forening` fra `CONVENTUS_ID` og `key` fra `CONVENTUS_API_KEY`; skriv aldrig værdierne i
+skillen, kommandohistorikken, logs eller svaret til brugeren. Brug endpointet til at finde og
+verificere et konkret gruppe-ID ud fra gruppens titel og øvrige metadata, før en medlems- eller
+redigeringsarbejdsgang fortsættes.
+
+Følg [Conventus' API-vejledning for grupper](https://www.conventus.dk/vejledninger/#dokument/12895):
+
+- Send altid `forening` og `key`.
+- Brug efter behov de valgfrie parametre `ider`, `afdeling`, `type`, `aktiv`, `aktiviteter`,
+  `offentlig`, `vis_medlemsliste` og `online_tilmelding`.
+- Sæt kun `type` til en dokumenteret værdi: `hold` eller `udvalg`.
+- Forvent `aktiv=true`, når parameteren udelades. Angiv `aktiv=false`, hvis inaktive grupper også
+  skal findes.
+- Sæt `online_tilmelding=true`, når svaret også skal indeholde antal pladser, trænere og
+  træningstider.
+- Forvent grupper sorteret alfabetisk efter titel. Match stadig på både titel og relevante
+  kendetegn, hvis flere grupper har samme eller lignende navn.
+- Behandl ekstra felter fra aktiverede Conventus-moduler som valgfrie. Antag ikke et fast XSD-skema.
+
+Returnér kun de gruppemetadata, der er nødvendige for opgaven, og gem aldrig det rå API-svar i
+repoet.
 
 ## Hent medlemmer i en konkret gruppe (read-only API)
 
@@ -232,7 +263,8 @@ CONVENTUS_USERNAME=
 CONVENTUS_PASSWORD=
 ```
 
-- `CONVENTUS_ID` + `CONVENTUS_API_KEY` — bruges til read-only API-opslag (search/list/stats).
+- `CONVENTUS_ID` + `CONVENTUS_API_KEY` — bruges til read-only API-opslag af grupper og medlemmer
+  samt `search`, `list` og `stats`.
 - `CONVENTUS_USERNAME` + `CONVENTUS_PASSWORD` — bruges til browserautomation, herunder `budget-report`, da disse operationer ikke har et API-endpoint.
 
 ## Resultatopgørelse til budgetopfølgning
