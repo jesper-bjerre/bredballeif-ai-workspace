@@ -1,6 +1,6 @@
 ---
 name: bredballeif-padel-kontingent-beregner
-description: 'Beregn, validér og diff sæsonvægtede Bredballe IF Padel-kontingenter uden at skrive til Conventus eller andre systemer. Brug når agenten bredballeif-padel-administrator skal justere padel-kontingenter, kontrollere månedlige priser, finde aktiv/inaktiv status for "til og med 30. juni" eller "resten af året", eller returnere struktureret JSON til efterfølgende opdatering via andre skills.'
+description: 'Beregn, validér og diff sæsonvægtede prime- og non-prime-kontingenter for Bredballe IF Padel uden at skrive til Conventus eller andre systemer. Brug når agenten bredballeif-padel-administrator skal justere padel-kontingenter, kontrollere månedlige priser, finde aktiv/inaktiv status for "til og med 30. juni" eller "resten af året", eller returnere struktureret JSON til efterfølgende opdatering via andre skills.'
 ---
 
 # Bredballe IF Padel-kontingentberegner
@@ -10,10 +10,13 @@ Skillen må kun beregne, validere og returnere JSON; den må ikke opdatere Conve
 
 ## Regler
 
-- Årskontingent for et helt kalenderår er `1600 DKK`.
+- Årskontingent for prime i et helt kalenderår er `1600 DKK`.
+- Beregn altid den rå non-prime-pris som halvdelen af den rå prime-pris for præcis samme periode.
+- Afrund hvert endeligt kontingentbeløb til nærmeste `25 DKK`. Eksempel: `599 DKK` bliver `600 DKK`,
+  og `561 DKK` bliver `550 DKK`. Ligger beløbet præcis midt mellem to trin, afrund opad.
 - Aktuel måned tæller altid som en hel måned; beregn aldrig dagspris.
 - Brug tidszonen `Europe/Copenhagen`, når dato ikke er angivet.
-- Månedstabel:
+- Månedstabel for prime:
   - januar `25`
   - februar `25`
   - marts `75`
