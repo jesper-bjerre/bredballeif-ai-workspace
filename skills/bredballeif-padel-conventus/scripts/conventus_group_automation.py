@@ -47,10 +47,31 @@ CONVENTUS_BASE = "https://www.conventus.dk"
 LOGIN_URL = f"{CONVENTUS_BASE}/login/index.php"
 LOGGEDIN_BASE = f"{CONVENTUS_BASE}/login/loggedin.php"
 POPUP_BASE = f"{CONVENTUS_BASE}/login/popup.php"
+GROUP_MEMBERS_PAGE = "adressebog/medlemmer/vis_gruppe_popup.php"
+
+_GROUP_MEMBER_ROW_ID = re.compile(
+    r"^gruppe_(?P<group_id>\d+)_medlem_(?P<member_id>\d+)_type_(?P<member_type>\d+)$"
+)
 
 # Template group IDs for event types — these are duplicated via grp_dupliker.php
 TEMPLATE_AMERICANO = "1049833"
 TEMPLATE_MEXICANO = "1049833"  # TODO: update with actual Mexicano template ID
+
+
+def validate_group_id(group_id: str) -> str:
+    """Validate and normalize a numeric Conventus group ID."""
+    normalized = group_id.strip()
+    if not re.fullmatch(r"[1-9]\d*", normalized):
+        raise ValueError("Gruppe-ID skal være et positivt heltal.")
+    return normalized
+
+
+def parse_group_member_row_id(row_id: str, expected_group_id: str) -> tuple[str, str]:
+    """Return member ID and type from a Conventus group-member row ID."""
+    match = _GROUP_MEMBER_ROW_ID.fullmatch(row_id)
+    if match is None or match.group("group_id") != expected_group_id:
+        raise ValueError("Ugyldigt medlemsrække-ID for den valgte gruppe.")
+    return match.group("member_id"), match.group("member_type")
 
 
 def _to_date_input_format(date_str: str) -> str:
@@ -350,6 +371,49 @@ class ConventusGroupAutomation:
                 continue
 
         return None
+
+    # -- read-only group members -------------------------------------------
+    def fetch_group_members_from_web(self, group_id: str) -> list[dict[str, str]]:
+        """Read every member shown for one group in the authenticated web app."""
+        normalized_group_id = validate_group_id(group_id)
+        p = self.page
+        url = f"{POPUP_BASE}?page={GROUP_MEMBERS_PAGE}&idv1={normalized_group_id}"
+        p.goto(url, wait_until="networkidle")
+        self._wait_for_stable(500)
+
+        if p.locator('input[name="brugernavn"], input[type="password"]').count() > 0:
+            raise RuntimeError("Conventus-sessionen er ikke logget ind.")
+
+        rows = p.locator(
+            f'tr[id^="gruppe_{normalized_group_id}_medlem_"]'
+        ).all()
+        members: list[dict[str, str]] = []
+        seen_member_ids: set[str] = set()
+
+        for row in rows:
+            row_id = row.get_attribute("id") or ""
+            try:
+                member_id, member_type = parse_group_member_row_id(
+                    row_id, normalized_group_id
+                )
+            except ValueError:
+                continue
+
+            cells = row.locator("table.bt.tableNoPadding td").all()
+            if len(cells) < 3:
+                continue
+            name = " ".join(cells[-1].inner_text().split())
+            if not name or member_id in seen_member_ids:
+                continue
+
+            seen_member_ids.add(member_id)
+            members.append({
+                "id": member_id,
+                "navn": name,
+                "type": member_type,
+            })
+
+        return members
 
     # -- group creation ------------------------------------------------------
     def create_group(self, config: GroupConfig) -> GroupResult:

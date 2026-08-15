@@ -241,21 +241,32 @@ def cmd_list(args: argparse.Namespace) -> None:
     members = fetch_members(group_ids)
 
     bulk_approved = False
-    if args.approve_bulk:
+    approval = None
+    if args.all or args.approve_bulk:
         try:
-            ApprovalContext.from_environment().require("conventus.bulk-read")
+            approval = ApprovalContext.from_environment()
+            approval.require("conventus.bulk-read")
             bulk_approved = True
         except PolicyViolation as exc:
             raise SystemExit(str(exc)) from exc
     try:
-        members = enforce_record_limit(members, limit=args.limit, bulk_approved=bulk_approved)
+        requested_limit = max(1, len(members)) if args.all else args.limit
+        members = enforce_record_limit(
+            members, limit=requested_limit, bulk_approved=bulk_approved
+        )
     except PolicyViolation as exc:
         raise SystemExit(str(exc)) from exc
 
+    if approval is not None:
+        emit_audit_event(audit_event(
+            "conventus.members.bulk-read", "approved", record_count=len(members),
+            actor_role=approval.actor_role, correlation_id=approval.correlation_id,
+        ))
+
     group_label = args.group if args.group in GROUP_ALIASES else ", ".join(group_ids)
     print(f"=== Conventus: {len(members)} medlemmer i '{group_label}' ===\n")
-    print(f"  {'ID':>8s}  {'Navn':35s}  {'Email':35s}  {'Mobil':12s}  Grupper")
-    print(f"  {'-'*8}  {'-'*35}  {'-'*35}  {'-'*12}  {'-'*30}")
+    print(f"  {'ID':>8s}  {'Navn':35s}  Grupper")
+    print(f"  {'-'*8}  {'-'*35}  {'-'*30}")
     for m in sorted(members, key=lambda x: x["navn"]):
         print_member(m)
 
@@ -436,6 +447,45 @@ def cmd_budget_report(args: argparse.Namespace) -> None:
     print_report(report)
 
 
+def cmd_list_group_web(args: argparse.Namespace) -> None:
+    """List every member in one group through the authenticated Conventus web app."""
+    from conventus_group_automation import (
+        ConventusGroupAutomation,
+        validate_group_id,
+    )
+
+    try:
+        group_id = validate_group_id(args.group_id)
+        approval = ApprovalContext.from_environment()
+        approval.require("conventus.bulk-read")
+    except (PolicyViolation, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+    auto = ConventusGroupAutomation(headless=not args.no_headless)
+    try:
+        auto.start()
+        if not auto.login():
+            raise SystemExit("Conventus-login fejlede.")
+        members = auto.fetch_group_members_from_web(group_id)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
+    finally:
+        auto.stop()
+
+    emit_audit_event(audit_event(
+        "conventus.members.web.bulk-read", "approved", record_count=len(members),
+        actor_role=approval.actor_role, correlation_id=approval.correlation_id,
+    ))
+
+    group_label = GROUP_NAMES.get(group_id, group_id)
+    print(f"=== Conventus web: {len(members)} medlemmer i '{group_label}' ===\n")
+    print(f"  {'ID':>8s}  Navn")
+    print(f"  {'-'*8}  {'-'*35}")
+    for member in sorted(members, key=lambda item: item["navn"].casefold()):
+        print(f"  {member['id']:>8s}  {member['navn']}")
+    print(f"\n  Total: {len(members)} medlemmer")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Conventus membership query agent")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -447,11 +497,27 @@ def main() -> None:
 
     p_list = sub.add_parser("list", help="List all members in a group")
     p_list.add_argument("--group", default="all", help="Group alias or comma-separated IDs (default: all)")
-    p_list.add_argument("--limit", type=int, default=10, help="Maksimalt antal poster (default: 10)")
+    p_list_size = p_list.add_mutually_exclusive_group()
+    p_list_size.add_argument(
+        "--limit", type=int, default=10, help="Maksimalt antal poster (default: 10)"
+    )
+    p_list_size.add_argument(
+        "--all", action="store_true",
+        help="Hent alle medlemmer; kræver conventus.bulk-read-godkendelse fra gatewayen",
+    )
     p_list.add_argument(
         "--approve-bulk", action="store_true",
-        help="Kræver samtidig tidsbegrænset conventus.bulk-read-godkendelse fra gatewayen",
+        help="Godkend et --limit over 10; kræver conventus.bulk-read fra gatewayen",
     )
+
+    p_list_web = sub.add_parser(
+        "list-group-web",
+        help="List every member in one group through the authenticated Conventus web app",
+    )
+    p_list_web.add_argument(
+        "--group-id", required=True, help="Numeric Conventus group ID"
+    )
+    p_list_web.add_argument("--no-headless", action="store_true", help="Show browser window")
 
     sub.add_parser("stats", help="Show membership statistics per year with churn analysis (2021-2026)")
     sub.add_parser("compare", help="Compare Conventus vs HalBooking — show members only in one system")
@@ -506,6 +572,8 @@ def main() -> None:
         cmd_search(args)
     elif args.action == "list":
         cmd_list(args)
+    elif args.action == "list-group-web":
+        cmd_list_group_web(args)
     elif args.action == "stats":
         cmd_stats(args)
     elif args.action == "compare":
