@@ -59,6 +59,7 @@ Installer dependencies for de skills der bruges i OpenClaw:
 pip install -r skills/bredballeif-boerneattest/requirements.txt
 pip install -r skills/bredballeif-padel-baner/requirements.txt
 pip install -r skills/bredballeif-padel-conventus/requirements.txt
+pip install -r skills/bredballeif-oekonomi/requirements.txt
 pip install -r skills/bredballeif-padel-halbooking/requirements.txt
 pip install -r skills/bredballeif-padel-onboarding/requirements.txt
 python -m playwright install chromium
@@ -152,7 +153,8 @@ OpenClaw-whitelists nu og senere med den særskilt beskrevne RBAC-model.
 /opt/bredballeif-ai-workspace/skills/bredballeif-oekonomi/bin/bredballeif-oekonomi.sh
 ```
 
-Økonomi-wrapperen accepterer kun `budget-report` og hjælp. Conventus-koden skal være installeret
+Økonomi-wrapperen accepterer `budget-report`, `board-report` og hjælp. `board-report` læser kun
+finans-resultatopgørelser og skriver en lokal PDF med afstemning og foreslåede ratinger. Conventus-koden skal være installeret
 som søskende-skill, men den brede Conventus-wrapper skal ikke whitelistes for denne agent.
 
 ### `bredballeif-padel-administrator`
@@ -172,8 +174,8 @@ kortlivet, handlingsspecifik approval i Python-entrypointet.
 - Bot `BIF Administrator` routes til agent `bredballeif-administrator`.
 - Bot `BIF Padel Administrator` routes til agent `bredballeif-padel-administrator`.
 
-Den tværgående administrator får børneattest-flowet og read-only budgetopfølgning for en konkret
-BIF-afdeling. Padel-agenten beholder sine padel-specifikke wrappers.
+Den tværgående administrator får børneattest-flowet, read-only budgetopfølgning for en konkret
+BIF-afdeling og en udtrykkeligt bestilt samlet bestyrelsesrapport. Padel-agenten beholder sine padel-specifikke wrappers.
 
 ### Import og kontrol af budgetopfølgning
 
@@ -188,7 +190,7 @@ på deres relative placeringer; Conventus-entrypointen afhænger af de fælles k
 Kør fra checkout-roden efter import (med runtime-brugerens miljøvariabler):
 
 ```bash
-.venv/bin/python -m pip install -r skills/bredballeif-padel-conventus/requirements.txt
+.venv/bin/python -m pip install -r skills/bredballeif-oekonomi/requirements.txt
 .venv/bin/python -m playwright install chromium
 chmod +x skills/bredballeif-oekonomi/bin/bredballeif-oekonomi.sh
 skills/bredballeif-oekonomi/bin/bredballeif-oekonomi.sh budget-report --department Esport --year 2026
@@ -204,6 +206,26 @@ Smoke-testen skal give ét JSON-objekt med `department: "40: 105. E-sport"`, `ye
 indeholde login/debug-output. Finansbeløb skal ikke kopieres til deploylogs eller git.
 Test derefter i Telegram: `Lav budgetopfølgning på afdeling Esport for 2026`.
 Agenten skal svare på dansk og skelne helårsbudget fra et eventuelt manglende periodebudget.
+
+Kontrollér også den samlede PDF-funktion fra checkout-roden:
+
+```bash
+skills/bredballeif-oekonomi/bin/bredballeif-oekonomi.sh board-report --year 2026 --output data/reports/Budgetopfoelgning_Bredballe_IF_2026.pdf
+```
+
+Kommandoen henter den observerede liste af finansafdelinger og en samlet kontrolrapport. Den stopper
+ved manglende budget eller afstemningsdifference og overskriver ikke eksisterende filer. Stdout er
+kun et JSON-statusobjekt med år, antal afdelinger, ratingfordeling, afstemning og lokal PDF-sti;
+ingen finansbeløb eller medlemsobjekter føres tilbage til model-/deploylogs. PDF og finansdata
+skal forblive private og ude af git. Runtime-policyens grænser for medlemsobjekter ophæves ikke af
+den særskilte, lokale behandling af samlede finansdata.
+
+Efter import kan bestyrelsen skrive i Telegram:
+`Lav en samlet budgetopfølgningsrapport som PDF for alle afdelinger i Bredballe IF for 2026 med rating og opfølgningsspørgsmål`.
+Agenten skal bruge økonomi-wrapperens `board-report`, læse den samlede rapports reference, kontrollere
+PDF'en og levere den gennem den eksisterende, autoriserede artefaktkanal. Whitelist af andre wrappers,
+generel Python/bash eller adgang til medlemsopslag er ikke nødvendig. Standardratinger er analytiske
+forslag; de er ikke vedtagne BIF-regler. Se økonomi-skillens `references/samlet-budgetopfoelgning.md`.
 
 Agent- og botnavne ændres ikke som del af TensorX-migrationen. Nye agenter skal også bruge den fælles
 TensorX Flash-profil.

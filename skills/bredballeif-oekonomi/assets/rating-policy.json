@@ -1,0 +1,18 @@
+{
+  "total_cost_min": "10000",
+  "total_cost_pct": "10",
+  "result_red_min": "25000",
+  "result_red_cost_pct": "10",
+  "line_red_min": "25000",
+  "line_red_cost_pct": "5",
+  "line_overrun_pct": "20",
+  "line_amber_min": "10000",
+  "result_amber_min": "5000",
+  "income_gap_min": "10000",
+  "income_gap_pct": "20",
+  "income_line_gap_min": "25000",
+  "income_line_gap_pct": "50",
+  "low_cost_budget_min": "10000",
+  "low_cost_execution_pct": "25",
+  "result_pct_base_min_pct": "1"
+}

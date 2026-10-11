@@ -1,6 +1,6 @@
 ---
 name: bredballeif-oekonomi
-description: 'Lav afdelingsbudgetter og budgetopfølgning for Bredballe IF på baggrund af read-only finansdata fra Conventus. Brug når en BIF-afdeling skal udarbejde budget, sammenligne budget med realiseret resultat, analysere afvigelser og udvikling over flere år, lave helårsprognose eller formulere økonomiske opfølgningspunkter til udvalg og bestyrelse.'
+description: 'Lav afdelingsbudgetter, budgetopfølgning og samlede PDF-rapporter for Bredballe IF ud fra read-only finansdata i Conventus. Brug ved opfølgning for en afdeling eller alle afdelinger, med afvigelser i kroner og procent, foreslåede ratinger og spørgsmål til bestyrelsen.'
 ---
 
 # Bredballe IF økonomi
@@ -34,8 +34,9 @@ python -m agent budget-report --department Esport --year 2026
 python -m agent budget-report --department Padel --years 3
 ```
 
-- Angiv altid én afdeling. `Esport`, `E-sport` og `40: 105. E-sport` vælger samme afdeling;
-  `Padel` vælger `60: 116. Padel`. Opslag på alle afdelinger er blokeret.
+- Ved `budget-report` angives én afdeling. `Esport`, `E-sport` og `40: 105. E-sport` vælger
+  samme afdeling; `Padel` vælger `60: 116. Padel`. Brug `board-report` til en udtrykkeligt
+  bestilt samlet rapport; et samlet filter i `budget-report` er fortsat blokeret.
 - Brug `--year YYYY`, når brugeren angiver år. En efterfølgende besked som "2026" præciserer
   den igangværende opgave. Uden år bruges indeværende år i `Europe/Copenhagen`; oplys valget.
 - `--years 3` omfatter rapportåret og op til to tidligere regnskabsår. Vælg 1-3 år efter opgaven.
@@ -55,7 +56,7 @@ for den tværgående administrator. Brug et komplet repo-checkout eller medtag d
 `scripts/gdpr_controls.py` og `config/gdpr-skill-policies.json` på deres relative placeringer.
 Se [OpenClaw-opsætning](../../docs/openclaw-setup.md).
 
-Conventus-requirements og Playwright Chromium skal være installeret, og
+Økonomi-skillens `requirements.txt` (inklusive Conventus, ReportLab og pypdf) og Playwright Chromium skal være installeret, og
 `CONVENTUS_USERNAME`/`CONVENTUS_PASSWORD` skal være sat i runtime-miljøet. Wrapperen foretrækker
 workspace `.venv`; et andet Python-miljø kan angives med `BIF_PYTHON_BIN` i den betroede
 runtime-konfiguration. Agenten skal ikke lede vilkårligt efter fortolkere eller sætte credentials.
@@ -88,6 +89,40 @@ Læs også [references/padel.md](references/padel.md) ved enhver budgettering el
 4. Klassificér væsentlige afvigelser som timing, permanent, volumen, pris, engangspost eller datakvalitet.
 5. Beregn kun helårsprognose ud fra dokumenterede forudsætninger; brug ikke ukritisk lineær fremskrivning ved sæsondrift.
 6. Angiv ansvarlig, handling og frist, når brugeren har givet disse oplysninger; ellers angiv dem som åbne punkter.
+
+## Samlet rapport for bestyrelsen
+
+Brug denne funktion, når brugeren bestiller en samlet budgetopfølgningsrapport for alle BIF-afdelinger.
+Læs [references/samlet-budgetopfoelgning.md](references/samlet-budgetopfoelgning.md) for rating,
+afstemning, privat lagring og PDF-kontrol. Funktionen er en separat finanshandling og giver ingen
+adgang til medlemsopslag eller ændringer i Conventus.
+
+```bash
+./bin/bredballeif-oekonomi.sh board-report --year 2026 --output data/reports/Budgetopfoelgning_Bredballe_IF_2026.pdf
+```
+
+PowerShell-wrapperen accepterer samme argumenter. Den agent-neutrale kommando med `PYTHONPATH`
+sat til **denne** skills `scripts/` er:
+
+```bash
+python -m bif_economy board-report --year 2026 --output data/reports/Budgetopfoelgning_Bredballe_IF_2026.pdf
+```
+
+- Angiv det bestilte år og brugerens PDF-destination. Brug ellers `data/reports/`, som er gitignored.
+  Eksisterende filer overskrives ikke; vælg et nyt filnavn ved en ny rapport.
+- Hent alle observerede afdelingsvalg, også hovedkasse, støtte-/driftsområder og områder med nulbeløb.
+  Afstem både bogført og budget for indtægter, udgifter og resultat mod en samlet kontrolrapport.
+  Ved manglende budgetkolonne eller afstemningsdifference stoppes rapporten frem for at levere en
+  tilsyneladende komplet oversigt.
+- PDF'en indeholder ledelsesresume, prioriteret afdelingsliste, kroner/procent, ratinggrundlag,
+  væsentlige kontoposter og opfølgningsspørgsmål for hver afdeling. Ratingerne er analytiske forslag,
+  ikke vedtagne BIF-regler; standardgrænser findes i `assets/rating-policy.json`.
+- Stdout er kun JSON med status, antal afdelinger, ratingfordeling, afstemning og PDF-sti. Finansdata
+  behandles lokalt. Rapporter og eventuelle private udtræk må aldrig committes eller kopieres til
+  deploylogs. En samlet rapport kræver kun økonomi-wrapperen i OpenClaws whitelist.
+- Kontrollér den færdige PDF visuelt før aflevering, og oplys at bogført mod helårsbudget ikke er en
+  periodeafvigelse eller helårsprognose. Supplér spørgsmål med dokumenterede forklaringer, når de
+  findes; opfind ikke årsager, aftaler eller restårsbeløb.
 
 ## Leverance
 

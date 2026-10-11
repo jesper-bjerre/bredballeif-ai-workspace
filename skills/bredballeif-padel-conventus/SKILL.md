@@ -297,4 +297,9 @@ workspace `.venv`, hvis den findes; ellers `python3`/`python`. `BIF_PYTHON_BIN` 
 betroet runtime-konfiguration. En X-server er ikke nødvendig. Ved fejl skal agenten rapportere
 den konkrete manglende forudsætning og undlade gentagne identiske forsøg eller egne rå dumps.
 
-Gem ikke outputtet i repoet. Brug `bredballeif-oekonomi` til budgettering og analyse af de returnerede finansdata.
+Gem ikke outputtet i git. Brug `bredballeif-oekonomi` til budgettering og analyse af de returnerede finansdata.
+
+Ved en udtrykkeligt bestilt samlet PDF til bestyrelsen bruges økonomi-skillens `board-report`.
+Den genbruger `fetch_budget_portfolio` i denne skills kode: observeret afdelingsliste, ét udtræk pr.
+afdeling og en samlet kontrolrapport i samme headless-session. Det er en særskilt finansfunktion;
+den brede Conventus-wrapper og `budget-report` åbner ikke for samlede medlems- eller afdelingsopslag.

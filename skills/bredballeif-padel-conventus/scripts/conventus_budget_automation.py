@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+from collections.abc import Callable
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from datetime import datetime
@@ -113,9 +114,54 @@ class ConventusBudgetAutomation(ConventusGroupAutomation):
                 button.click()
 
     def fetch_report(self, request: BudgetReportRequest) -> dict[str, Any]:
+        return self._fetch_report(request)
+
+    def _department_options(self) -> list[dict[str, str]]:
+        self.page.wait_for_function("""() => [...document.querySelectorAll(
+            'select[name="soeg_afdelinger"] option'
+        )].some(option => option.value !== '0' && option.textContent.trim())""", timeout=20_000)
+        return self.page.locator('select[name="soeg_afdelinger"] option').evaluate_all(
+            "options => options.map(o => ({value:o.value,label:o.textContent.trim()}))"
+        )
+
+    def fetch_all_reports(self, request: BudgetReportRequest) -> dict[str, Any]:
+        """Explicit board scope: finite department list plus a reconciliation report.
+
+        This financial-only operation is exposed by the economy skill, not by
+        the membership CLI or its general-purpose wrapper.
+        """
+        year = request.year if request.year is not None else current_time().year
+        self._select_context(request, year)
+        self.page.goto(BUDGET_URL, wait_until="networkidle")
+        options = self._department_options()
+        departments = [option for option in options if option['value'] != '0' and option['label']]
+        aggregate = [option for option in options if option['value'] == '0']
+        if not departments or len(aggregate) != 1:
+            raise RuntimeError("Afdelingslisten eller det samlede kontrolvalg mangler")
+        if len({option['value'] for option in departments}) != len(departments) or \
+                len({option['label'] for option in departments}) != len(departments):
+            raise RuntimeError("Afdelingslisten indeholder dubletter")
+        reports = []
+        for option in departments:
+            scoped = BudgetReportRequest(option['label'], year_count=1, year=year, account=request.account)
+            report = self._fetch_report(scoped, option=option, context_selected=True, expected_options=options)
+            report['department_id'] = option['value']
+            reports.append(report)
+        control = self._fetch_report(
+            BudgetReportRequest('Samlet Bredballe IF', year_count=1, year=year, account=request.account),
+            option=aggregate[0], context_selected=True, expected_options=options,
+        )
+        control['scope'] = 'all_departments'
+        return {'source': 'Conventus', 'account': request.account, 'year': year,
+                'departments': departments, 'reports': reports, 'consolidated': control}
+
+    def _fetch_report(self, request: BudgetReportRequest, *, option: dict[str, str] | None = None,
+                      context_selected: bool = False,
+                      expected_options: list[dict[str, str]] | None = None) -> dict[str, Any]:
         now = current_time()
         year = request.year if request.year is not None else now.year
-        self._select_context(request, year)
+        if not context_selected:
+            self._select_context(request, year)
         self._report_stage = "indlæsning af rapportkontroller"
         page = self.page
         page.goto(BUDGET_URL, wait_until="networkidle")
@@ -143,15 +189,15 @@ class ConventusBudgetAutomation(ConventusGroupAutomation):
             }
             return chosen.map(item => item.year);
         }""", {"year": year, "count": request.year_count - 1})
-        page.wait_for_function("""() => [...document.querySelectorAll(
-            'select[name="soeg_afdelinger"] option'
-        )].some(option => option.value !== '0' && option.textContent.trim())""", timeout=20_000)
+        options = self._department_options()
+        if expected_options is not None and sorted((o['value'],o['label']) for o in options) != \
+                sorted((o['value'],o['label']) for o in expected_options):
+            raise RuntimeError("Afdelingslisten blev ændret under udtrækket; hent rapporten igen")
         department_select = page.locator('select[name="soeg_afdelinger"]')
-        options = department_select.locator("option").evaluate_all(
-            "options => options.map(o => ({value:o.value,label:o.textContent.trim()}))"
-        )
         self._report_stage = "afdelingsvalg og rapportvisning"
-        department = match_department(options, request.department)
+        if option is not None and option not in options:
+            raise RuntimeError("Afdelingslisten blev ændret under udtrækket; hent rapporten igen")
+        department = option if option is not None else match_department(options, request.department)
         department_select.select_option(value=department["value"])
         with page.expect_navigation(wait_until="networkidle"):
             page.get_by_role("button", name="Vis", exact=True).click()
@@ -203,6 +249,17 @@ def fetch_budget_report(department: str, year_count: int = 3, headless: bool = T
                         year: int | None = None, account: str = "Bredballe IF") -> dict[str, Any]:
     """Return report data without login/debug output contaminating JSON."""
     request = BudgetReportRequest(department, year_count, year, account)
+    return _with_browser(lambda automation: automation.fetch_report(request), headless)
+
+
+def fetch_budget_portfolio(year: int | None = None, account: str = "Bredballe IF") -> dict[str, Any]:
+    """Read every observed financial department for an explicitly requested board report."""
+    request = BudgetReportRequest('Samlet Bredballe IF', year_count=1, year=year, account=account)
+    return _with_browser(lambda automation: automation.fetch_all_reports(request), True)
+
+
+def _with_browser(fetch: Callable[[ConventusBudgetAutomation], dict[str, Any]],
+                  headless: bool) -> dict[str, Any]:
     current_time()  # Check runtime dependencies before launching/login.
     if not os.getenv("CONVENTUS_USERNAME") or not os.getenv("CONVENTUS_PASSWORD"):
         raise ValueError("CONVENTUS_USERNAME og CONVENTUS_PASSWORD skal sættes i runtime-miljøet")
@@ -215,7 +272,7 @@ def fetch_budget_report(department: str, year_count: int = 3, headless: bool = T
             automation._report_stage = "login"
             if not automation.login():
                 raise RuntimeError("Login til Conventus fejlede")
-            return automation.fetch_report(request)
+            return fetch(automation)
     except BrowserError as exc:
         if "Executable doesn't exist" in str(exc):
             raise RuntimeError(

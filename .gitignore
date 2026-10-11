@@ -9,3 +9,4 @@ __pycache__/
 *.pyc
 **/scripts/screenshots/
 docs/analyse/fonde/Budgetopfoelgning_Esport_2026.pdf
+docs/analyse/fonde/Budgetopfoelgning_*.pdf

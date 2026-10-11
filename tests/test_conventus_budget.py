@@ -25,6 +25,12 @@ OPTIONS = [
 
 
 class DepartmentTests(unittest.TestCase):
+    def test_portfolio_invalid_year_fails_before_browser(self):
+        with patch.object(budget,'ConventusBudgetAutomation') as cls:
+            with self.assertRaises(ValueError):
+                budget.fetch_budget_portfolio(year=2100)
+            cls.assert_not_called()
+
     def test_spelling_variants_and_existing_padel(self):
         for name in ('Esport', 'E-sport', 'e SPORT', '40: 105. E-sport'):
             with self.subTest(name=name):
@@ -209,6 +215,46 @@ class BrowserRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.automation.fetch_report(budget.BudgetReportRequest('all',year=2026))
         self.assertEqual(self.requests,[])
+
+    def test_board_scope_uses_observed_departments_and_aggregate(self):
+        result=self.automation.fetch_all_reports(budget.BudgetReportRequest('Samlet Bredballe IF',year=2026))
+        self.assertEqual(result['departments'],OPTIONS[1:])
+        self.assertEqual([r['department_id'] for r in result['reports']],['40','60'])
+        self.assertEqual(result['consolidated']['scope'],'all_departments')
+        self.assertTrue(all(report['years']==[2026] for report in result['reports']))
+        self.assertEqual(self.requests.count('economy/regnskaber/start.php'),1)
+        self.assertEqual(self.requests.count('economy/regnskabsaar/start.php'),1)
+        self.assertFalse(any('edit' in r or 'save' in r for r in self.requests))
+
+    def test_changed_department_list_stops_portfolio(self):
+        real=self.automation._department_options
+        call_count=0
+        def changed():
+            nonlocal call_count
+            call_count+=1
+            options=real()
+            return options if call_count<3 else options[:-1]
+        with patch.object(self.automation,'_department_options',side_effect=changed):
+            with self.assertRaisesRegex(RuntimeError,'Afdelingslisten blev ændret'):
+                self.automation.fetch_all_reports(budget.BudgetReportRequest('Samlet Bredballe IF',year=2026))
+
+    def test_aggregate_and_duplicates_are_required_for_board_scope(self):
+        for options in (OPTIONS[1:],OPTIONS+[OPTIONS[1]]):
+            with self.subTest(options=options),patch.object(self.automation,'_department_options',return_value=options):
+                with self.assertRaises(RuntimeError):
+                    self.automation.fetch_all_reports(budget.BudgetReportRequest('Samlet Bredballe IF',year=2026))
+
+    def test_new_department_mid_fetch_is_not_silently_omitted(self):
+        real=self.automation._department_options
+        calls=0
+        def added():
+            nonlocal calls
+            calls+=1
+            options=real()
+            return options if calls==1 else options+[{'value':'70','label':'70: 107. Nyt testområde'}]
+        with patch.object(self.automation,'_department_options',side_effect=added):
+            with self.assertRaisesRegex(RuntimeError,'Afdelingslisten blev ændret'):
+                self.automation.fetch_all_reports(budget.BudgetReportRequest('Samlet Bredballe IF',year=2026))
 
 
 if __name__ == '__main__':
