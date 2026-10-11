@@ -18,17 +18,52 @@ Arbejd som økonomiassistent for Bredballe IF. Hent finansdata gennem `bredballe
 
 ## Hent grunddata
 
-Kør fra `skills/bredballeif-padel-conventus` eller brug dens wrapper:
+På OpenClaw bruges denne skills afgrænsede wrapper. Stien findes relativt til den importerede
+skill-mappe; der kræves ikke et aktiveret virtualenv eller en synlig browser:
 
 ```bash
-python -m agent budget-report --department Padel
-python -m agent budget-report
+./bin/bredballeif-oekonomi.sh budget-report --department Esport --year 2026
+./bin/bredballeif-oekonomi.sh budget-report --department Padel
 ```
 
-- Brug afdelingens navn; `Padel` svarer til Conventus-valget `60: 116. Padel`.
-- Udelad `--department` kun ved en analyse af opsummering af samtlige BIF-afdelinger.
-- Hent som udgangspunkt de seneste tre regnskabsår. Brug `--years N`, hvis opgaven kræver en anden periode.
-- Bed om de manglende data, hvis Conventus-rapporten ikke indeholder både relevant budget og realiseret resultat.
+På Windows bruges `bin/bredballeif-oekonomi.ps1` med samme argumenter. Den agent-neutrale
+entrypoint er fortsat Conventus-modulet, med `PYTHONPATH` sat til dets `scripts/`-mappe:
+
+```bash
+python -m agent budget-report --department Esport --year 2026
+python -m agent budget-report --department Padel --years 3
+```
+
+- Angiv altid én afdeling. `Esport`, `E-sport` og `40: 105. E-sport` vælger samme afdeling;
+  `Padel` vælger `60: 116. Padel`. Opslag på alle afdelinger er blokeret.
+- Brug `--year YYYY`, når brugeren angiver år. En efterfølgende besked som "2026" præciserer
+  den igangværende opgave. Uden år bruges indeværende år i `Europe/Copenhagen`; oplys valget.
+- `--years 3` omfatter rapportåret og op til to tidligere regnskabsår. Vælg 1-3 år efter opgaven.
+- Scriptet vælger selv regnskabet `Bredballe IF` og rapportåret i den nye login-session.
+  `--account` bruges kun, hvis et andet konkret regnskab er bestilt.
+- Brug JSON-felterne `year`, `years`, `has_budget`, `period` og `warnings` til at kontrollere
+  grundlaget. `retrieved_at` er udtrækstidspunkt, ikke bogføringens skæringsdato.
+- Lever den mulige opfølgning på de hentede tal. Hvis periodebudget eller restårsforudsætninger
+  mangler, markér begrænsningen; sammenlign ikke helårsbudgettet som et periodebudget, og opfind
+  ikke en prognose. Bed kun om oplysninger, der er nødvendige for den resterende analyse.
+
+## Runtime og fejl
+
+Importér både `bredballeif-oekonomi` og `bredballeif-padel-conventus` som søskende under
+`skills/`; økonomi-wrapperen genbruger Conventus-koden. Kun økonomi-wrapperen skal whitelistes
+for den tværgående administrator. Brug et komplet repo-checkout eller medtag de fælles
+`scripts/gdpr_controls.py` og `config/gdpr-skill-policies.json` på deres relative placeringer.
+Se [OpenClaw-opsætning](../../docs/openclaw-setup.md).
+
+Conventus-requirements og Playwright Chromium skal være installeret, og
+`CONVENTUS_USERNAME`/`CONVENTUS_PASSWORD` skal være sat i runtime-miljøet. Wrapperen foretrækker
+workspace `.venv`; et andet Python-miljø kan angives med `BIF_PYTHON_BIN` i den betroede
+runtime-konfiguration. Agenten skal ikke lede vilkårligt efter fortolkere eller sætte credentials.
+
+Brug headless på OpenClaw. Ved fejl: rapportér den konkrete fejl og manglende forudsætning.
+Skift ikke til `--no-headless`, lav ikke egne HTML-/screenshot-dumps, og gentag ikke samme
+kørsel uden en ændret forudsætning. En manglende formular dokumenterer ikke i sig selv,
+at Conventus er ændret eller kræver længere ventetid.
 
 ## Lav et afdelingsbudget
 

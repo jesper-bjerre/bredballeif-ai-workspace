@@ -42,10 +42,10 @@ python -m agent list --group non-prime
 python -m agent list --group all
 python -m agent stats
 
-# Finansdata (read-only browserautomation; seneste 3 år som standard)
+# Finansdata (headless; rapportåret og op til to tidligere år)
 python -m agent budget-report --department Padel
-python -m agent budget-report                       # alle BIF-afdelinger
-python -m agent budget-report --department Padel --years 4
+python -m agent budget-report --department Esport --year 2026
+python -m agent budget-report --department Padel --year 2026 --years 3
 ```
 
 ## Valg af datakilde
@@ -271,9 +271,30 @@ CONVENTUS_PASSWORD=
 
 `budget-report` følger denne read-only arbejdsgang:
 
-1. Log ind i Conventus og åbn `https://www.conventus.dk/login/economy.php?page=economy/budget/start.php&subheader=1`.
-2. Find `form[name="accountform"]` og vælg som standard de tre seneste regnskabsår i tabellens årsrækker.
-3. Vælg afdeling i `select[name="soeg_afdelinger"]#soeg_afdelinger`. Aliaset `Padel` vælger `60: 116. Padel`; tom afdeling giver alle BIF-afdelinger.
-4. Klik `Vis`, udlæs resultatopgørelsens tabeller og returnér dem som JSON på stdout.
+1. Log ind i en ny headless-session, vælg regnskabet `Bredballe IF` fra regnskabslisten og vælg
+   rapportåret fra regnskabsårslisten. Ingen budgetter eller posteringer ændres.
+2. Åbn `https://www.conventus.dk/login/economy.php?page=economy/budget/start.php&subheader=1`.
+   Denne visning indeholder både bogførte beløb og det valgte års budget. Vent på regnskabsrammen
+   og afdelingsvalgene; formularens synlighed alene er ikke et korrekt kriterium.
+3. Vælg én entydig afdeling. `Esport` matcher `40: 105. E-sport`, og `Padel` matcher
+   `60: 116. Padel`. Tomme eller samlede afdelingsopslag afvises.
+4. Vælg op til to tidligere år ved standarden `--years 3` (rapportåret tæller med), klik `Vis`,
+   og verificér afdeling og år i det indlæste resultat.
+5. Returnér kun resultatopgørelsen som JSON på stdout. Navigation, årsvælger, dubletter,
+   balance og bankkontonumre er udeladt; login/debug-output undertrykkes.
+
+`--year YYYY` vælger både regnskabs- og budgetår. Uden parameter bruges indeværende år i
+`Europe/Copenhagen`, også hvis et fremtidigt regnskabsår allerede er oprettet. `--account`
+kan vælge et andet præcist regnskabsnavn, hvis brugeren har bestilt det.
+
+Resultatet indeholder `year`, faktisk viste `years`, `comparison_years`, `has_budget`,
+`retrieved_at`, `period` og `warnings`. Budgettet er helårsbudget, og bogføringens skæringsdato
+er ikke verificeret. Brug kolonneoverskrifterne og disse felter i analysen; en indlæst tabel
+eller et valgt historisk år beviser ikke alene, at den rigtige rapport blev hentet.
+
+På OpenClaw skal Chromium være installeret i det valgte Python-miljø. Wrapperen bruger
+workspace `.venv`, hvis den findes; ellers `python3`/`python`. `BIF_PYTHON_BIN` kan sættes i
+betroet runtime-konfiguration. En X-server er ikke nødvendig. Ved fejl skal agenten rapportere
+den konkrete manglende forudsætning og undlade gentagne identiske forsøg eller egne rå dumps.
 
 Gem ikke outputtet i repoet. Brug `bredballeif-oekonomi` til budgettering og analyse af de returnerede finansdata.

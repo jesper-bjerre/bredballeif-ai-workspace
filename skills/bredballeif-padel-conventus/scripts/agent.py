@@ -439,11 +439,17 @@ def cmd_budget_report(args: argparse.Namespace) -> None:
     """Fetch a read-only income statement through Conventus browser automation."""
     from conventus_budget_automation import fetch_budget_report, print_report
 
-    report = fetch_budget_report(
-        department=args.department,
-        year_count=args.years,
-        headless=not args.no_headless,
-    )
+    try:
+        report = fetch_budget_report(
+            department=args.department,
+            year_count=args.years,
+            headless=not args.no_headless,
+            year=args.year,
+            account=args.account,
+        )
+    except (ValueError, RuntimeError) as exc:
+        print(f"Fejl: {exc}", file=sys.stderr)
+        sys.exit(1)
     print_report(report)
 
 
@@ -528,12 +534,15 @@ def main() -> None:
     p_budget.add_argument(
         "--department",
         required=True,
-        help="Department label; use 'Padel' as alias. Et tomt/all-department opslag er ikke tilladt.",
+        help="One department, e.g. Esport, E-sport or Padel; all-department queries are blocked.",
     )
     p_budget.add_argument(
         "--years", type=int, default=3, choices=range(1, 4), metavar="1..3",
-        help="Number of latest accounting years (default: 3, maximum: 3)"
+        help="Total actual years including the report year (default: 3, maximum: 3)"
     )
+    p_budget.add_argument("--year", type=int, choices=range(1900, 2100), metavar="YYYY",
+                          help="Report/budget year (default: current year in Europe/Copenhagen)")
+    p_budget.add_argument("--account", default="Bredballe IF", help="Exact accounting name")
     p_budget.add_argument("--no-headless", action="store_true", help="Show browser window")
 
     p_americano = sub.add_parser("create-americano", help="Create an Americano event (duplicates template)")

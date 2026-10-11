@@ -17,7 +17,7 @@ fx via systemd env file, Docker secrets, OpenClaw secret store eller tilsvarende
 
 | OpenClaw agent | Telegram bot | Formål | Skills |
 |---|---|---|---|
-| `bredballeif-administrator` | `BIF Administrator` | Tværgående Bredballe IF administration | `skills/bredballeif-boerneattest` |
+| `bredballeif-administrator` | `BIF Administrator` | Tværgående Bredballe IF administration | `skills/bredballeif-boerneattest`, `skills/bredballeif-oekonomi`; `skills/bredballeif-padel-conventus` som kodeafhængighed for økonomi |
 | `bredballeif-padel-administrator` | `BIF Padel Administrator` | Padel-administration og padelmedlemskab | `skills/bredballeif-padel-baner`, `skills/bredballeif-padel-conventus`, `skills/bredballeif-padel-halbooking`, `skills/bredballeif-padel-onboarding` |
 
 ### Besluttet målarkitektur
@@ -61,7 +61,11 @@ pip install -r skills/bredballeif-padel-baner/requirements.txt
 pip install -r skills/bredballeif-padel-conventus/requirements.txt
 pip install -r skills/bredballeif-padel-halbooking/requirements.txt
 pip install -r skills/bredballeif-padel-onboarding/requirements.txt
+python -m playwright install chromium
 ```
+
+På Linux kan Playwrights OS-dependencies installeres med `python -m playwright install --with-deps chromium`,
+hvis de mangler. Kør installationen med samme Python-miljø og OS-bruger som OpenClaw.
 
 ## Runtime-miljø
 
@@ -128,6 +132,9 @@ CONVENTUS_ID=
 CONVENTUS_API_KEY=
 ```
 
+Budgetrapporter bruger browserlogin og kræver desuden `CONVENTUS_USERNAME` og
+`CONVENTUS_PASSWORD`. API-nøglen alene giver ikke adgang til finansrapporten.
+
 For HalBooking-baserede skills bruges HalBooking-credentials fra runtime-miljøet. Se den relevante
 skills `assets/.env.example`.
 
@@ -142,7 +149,11 @@ OpenClaw-whitelists nu og senere med den særskilt beskrevne RBAC-model.
 
 ```text
 /opt/bredballeif-ai-workspace/skills/bredballeif-boerneattest/bin/bredballeif-boerneattest.sh
+/opt/bredballeif-ai-workspace/skills/bredballeif-oekonomi/bin/bredballeif-oekonomi.sh
 ```
+
+Økonomi-wrapperen accepterer kun `budget-report` og hjælp. Conventus-koden skal være installeret
+som søskende-skill, men den brede Conventus-wrapper skal ikke whitelistes for denne agent.
 
 ### `bredballeif-padel-administrator`
 
@@ -161,8 +172,38 @@ kortlivet, handlingsspecifik approval i Python-entrypointet.
 - Bot `BIF Administrator` routes til agent `bredballeif-administrator`.
 - Bot `BIF Padel Administrator` routes til agent `bredballeif-padel-administrator`.
 
-Det betyder at den tværgående administrator kun får adgang til børneattest-skillen, mens padel-agenten
-kun får adgang til padel-specifikke skills.
+Den tværgående administrator får børneattest-flowet og read-only budgetopfølgning for en konkret
+BIF-afdeling. Padel-agenten beholder sine padel-specifikke wrappers.
+
+### Import og kontrol af budgetopfølgning
+
+Ved import skal begge kanoniske mapper `skills/bredballeif-oekonomi` og
+`skills/bredballeif-padel-conventus` følge med, inklusive `bin/`, `scripts/`, references og
+requirements. Bevar søskendestrukturen. Import af kun `SKILL.md` er ikke tilstrækkelig.
+Brug det aktuelle checkout som én kilde; opret ikke en separat kopi af Conventus-koden i økonomi-skillen.
+Peg helst OpenClaws discovery-links på mapperne i et komplet checkout. Ved selektiv synkronisering
+skal repoets fælles `scripts/gdpr_controls.py` og `config/gdpr-skill-policies.json` også følge med
+på deres relative placeringer; Conventus-entrypointen afhænger af de fælles kontroller.
+
+Kør fra checkout-roden efter import (med runtime-brugerens miljøvariabler):
+
+```bash
+.venv/bin/python -m pip install -r skills/bredballeif-padel-conventus/requirements.txt
+.venv/bin/python -m playwright install chromium
+chmod +x skills/bredballeif-oekonomi/bin/bredballeif-oekonomi.sh
+skills/bredballeif-oekonomi/bin/bredballeif-oekonomi.sh budget-report --department Esport --year 2026
+```
+
+Wrapperen lokaliserer selv checkout og `.venv`; aktivering er ikke nødvendig. Hvis Python-miljøet
+ligger et andet sted, sættes `BIF_PYTHON_BIN` til dets fortolker i den betroede runtime-konfiguration.
+Whitelist den konkrete økonomi-wrapper i agentens tool-konfiguration og genindlæs agentens skills.
+Ingen brede Python-/shell-rettigheder er nødvendige.
+
+Smoke-testen skal give ét JSON-objekt med `department: "40: 105. E-sport"`, `year: 2026`,
+`years` inklusive 2026 og `has_budget: true`, hvis årets budgetkolonne findes. Stdout må ikke
+indeholde login/debug-output. Finansbeløb skal ikke kopieres til deploylogs eller git.
+Test derefter i Telegram: `Lav budgetopfølgning på afdeling Esport for 2026`.
+Agenten skal svare på dansk og skelne helårsbudget fra et eventuelt manglende periodebudget.
 
 Agent- og botnavne ændres ikke som del af TensorX-migrationen. Nye agenter skal også bruge den fælles
 TensorX Flash-profil.
